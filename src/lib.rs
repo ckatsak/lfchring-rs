@@ -4,8 +4,8 @@
 #![allow(dead_code, unused_variables, unused_imports)]
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::BTreeMap;
-use std::hash::Hasher as StdHasher;
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher as StdHasher};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -24,14 +24,14 @@ use thiserror::Error;
 
 pub type VNID = u16;
 
-pub type Result<T> = std::result::Result<T, CHRingError>;
+pub type Result<T> = std::result::Result<T, HashRingError>;
 
 #[derive(Debug, Error)]
-pub enum CHRingError {
-    #[error("Virtual node {vn:?} is already in the ring")]
-    VirtualNodeAlreadyIn { vn: String },
-    #[error("Virtual node {vn:?} is not in the ring")]
-    VirtualNodeAbsent { vn: String },
+pub enum HashRingError {
+    #[error("Virtual node {0:?} is already in the ring")]
+    VirtualNodeAlreadyPresent(String),
+    #[error("Virtual node {0:?} is not in the ring")]
+    VirtualNodeAbsent(String),
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -47,22 +47,20 @@ pub trait Hasher {
 }
 
 #[derive(Debug)]
-struct DefaultStdHasher(DefaultHasher);
+struct DefaultStdHasher;
 
 impl DefaultStdHasher {
+    #[inline]
     fn new() -> Self {
-        DefaultStdHasher(DefaultHasher::new())
+        DefaultStdHasher {}
     }
 }
 
 impl Hasher for DefaultStdHasher {
     fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {
-        // FIXME: DefaultStdHasher does not need to carry a DefaultHasher since an instance of the
-        // latter has to be instantiated anew every time to reset its internal state.
-        self.0 = DefaultHasher::new();
-        self.0.write(bytes);
-        let digest = self.0.finish();
-        digest.to_ne_bytes().to_vec()
+        let mut h = DefaultHasher::new();
+        h.write(bytes);
+        h.finish().to_ne_bytes().to_vec()
     }
 }
 
@@ -82,17 +80,14 @@ impl Hasher for DefaultStdHasher {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Node represents a single distinct node in the ring.
-///
-/// FIXME: `Ord` is required for automatic derivation of `Ord` on `VirtualNode`. However, ordering
-/// `VirtualNode`s should only depend on their `name`. `VirtualNode` lacks a custom `Ord`
-/// implementation for now.
 pub trait Node: Ord {
     /// Retrieve a name that uniquely identifies the particular Node.
     fn get_name(&self) -> Vec<u8>;
 }
 
 /// VirtualNode represents a single virtual node in the ring.
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
+//#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug)]
 pub struct VirtualNode<N: Node + ?Sized> {
     name: Vec<u8>,
     node: Arc<N>,
@@ -108,31 +103,54 @@ impl<N: Node + ?Sized> VirtualNode<N> {
     }
 }
 
-//// Required for `Eq`.
-//impl<N: Node + ?Sized> PartialEq for VirtualNode<N> {
-//    fn eq(&self, other: &Self) -> bool {
-//        self.name.eq(&other.name)
-//    }
-//}
-//
-//// Required for `Ord`.
-//impl<N: Node + ?Sized> PartialOrd for VirtualNode<N> {
-//    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-//        self.name.partial_cmp(&other.name)
-//    }
-//}
-//
-//// Required for use in `BTreeMap`.
-//impl<N: Node + ?Sized> Ord for VirtualNode<N> {
-//    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-//        self.name.cmp(&other.name)
-//    }
-//}
+impl<N: Node + ?Sized> Clone for VirtualNode<N> {
+    fn clone(&self) -> Self {
+        VirtualNode {
+            name: self.name.clone(),
+            node: Arc::clone(&self.node),
+            vnid: self.vnid,
+        }
+    }
+}
 
-impl<N> std::fmt::Display for VirtualNode<N>
-where
-    N: Node + ?Sized,
-{
+// Required for `Eq`.
+impl<N: Node + ?Sized> PartialEq for VirtualNode<N> {
+    fn eq(&self, other: &Self) -> bool {
+        //self.name.eq(&other.name)
+        self.name == other.name
+    }
+}
+
+// Required for `Ord`.
+impl<N: Node + ?Sized> Eq for VirtualNode<N> {}
+
+// Required for `Ord`.
+impl<N: Node + ?Sized> PartialOrd for VirtualNode<N> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.name.partial_cmp(&other.name)
+    }
+}
+
+// `Ord` is required to be able to store `VirtualNode` in a `BTreeSet`. Ordering `VirtualNode`s
+// should probably only depend on their `name`, therefore we implement it rather than derive it.
+impl<N: Node + ?Sized> Ord for VirtualNode<N> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(&other.name)
+    }
+}
+
+// Hash `VirtualNode`s based on their `name` field only, because I think the following must
+// *always* hold:
+//      if (x == y) then (hash(x) == hash(y))
+// It is also demonstrated here:
+//      https://doc.rust-lang.org/std/collections/index.html#insert-and-complex-keys
+impl<N: Node + ?Sized> Hash for VirtualNode<N> {
+    fn hash<H: StdHasher>(&self, hasher: &mut H) {
+        self.name.hash(hasher);
+    }
+}
+
+impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -159,7 +177,7 @@ where
 /// "automatically managed" data replication among the distinct node.
 #[derive(Debug)]
 pub struct HashRing<N: Node + ?Sized, H: Hasher> {
-    state: Atomic<HashRingState<N, H>>,
+    inner: Atomic<HashRingState<N, H>>,
 }
 
 impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
@@ -171,24 +189,24 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         replication_factor: u8,
         nodes: &[Arc<N>],
     ) -> Result<Self> {
-        let mut state = HashRingState::empty(hasher, vnodes_per_node, replication_factor);
-        //let mut state = HashRingState::empty(hasher, vnodes_per_node, replication_factor, nodes);
-        state.insert(nodes)?;
+        let mut inner = HashRingState::empty(hasher, vnodes_per_node, replication_factor);
+        //let mut inner = HashRingState::empty(hasher, vnodes_per_node, replication_factor, nodes);
+        inner.insert(nodes)?;
         Ok(HashRing {
-            state: Atomic::new(state),
+            inner: Atomic::new(inner),
         })
     }
 
     pub fn len_nodes(&self) -> usize {
         let guard = crossbeam_epoch::pin();
-        let state = self.state.load(Ordering::Acquire, &guard);
-        unsafe { state.deref().len_nodes() }
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        unsafe { inner.deref().len_nodes() }
     }
 
     pub fn len_virtual_nodes(&self) -> usize {
         let guard = crossbeam_epoch::pin();
-        let state = self.state.load(Ordering::Acquire, &guard);
-        unsafe { state.deref().len_virtual_nodes() }
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        unsafe { inner.deref().len_virtual_nodes() }
     }
 }
 
@@ -223,7 +241,7 @@ struct HashRingState<N: Node + ?Sized, H: Hasher> {
     hasher: H,
     vnodes_per_node: VNID,
     replication_factor: u8,
-    vnodes: BTreeMap<VirtualNode<N>, Vec<Arc<N>>>,
+    vnodes: BTreeSet<VirtualNode<N>>,
 }
 
 impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
@@ -238,28 +256,25 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
             hasher,
             vnodes_per_node,
             replication_factor,
-            vnodes: BTreeMap::new(),
+            vnodes: BTreeSet::new(),
         }
     }
 
-    /// First, initialize all vnodes for the given nodes into a new `BTreeMap`. Then, check whether
+    /// First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
     /// any of them is already present in the current vnodes map to make sure no collision occurs.
     /// Finally, merge the new vnodes into the old ones.
-    //fn insert(&mut self, nodes: &[Arc<N>]) -> Result<BTreeMap<VirtualNode<N>, Vec<Arc<N>>>> {
     fn insert(&mut self, nodes: &[Arc<N>]) -> Result<()> {
-        let mut new = BTreeMap::new();
+        let mut new = BTreeSet::new();
         for node in nodes {
             for vnid in 0..self.vnodes_per_node {
                 let vn = VirtualNode::new(&mut self.hasher, Arc::clone(&node), vnid);
                 // We need to not only check whether vn is already in the ring, but also whether
                 // it is present among the vnodes we are about to extend the ring by.
-                if self.vnodes.contains_key(&vn) || new.contains_key(&vn) {
-                    return Err(CHRingError::VirtualNodeAlreadyIn {
-                        vn: format!("{}", vn),
-                    });
+                if self.vnodes.contains(&vn) || !new.insert(vn.clone()) {
+                    // FIXME: How to avoid cloning the VirtualNode but also be able to use it in:
+                    return Err(HashRingError::VirtualNodeAlreadyPresent(format!("{}", vn)));
                 }
-                trace!("Including vnode '{}' in the ring extension!", vn);
-                let _ = new.insert(vn, Vec::with_capacity(self.replication_factor as usize));
+                trace!("vnode '{}' has been included in the ring extension", vn);
             }
         }
         self.vnodes.extend(new);
