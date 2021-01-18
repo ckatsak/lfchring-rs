@@ -3,9 +3,11 @@
 //#![deny(missing_docs)]
 #![allow(dead_code, unused_variables, unused_imports)]
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher as StdHasher};
+use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -82,7 +84,7 @@ impl Hasher for DefaultStdHasher {
 /// Node represents a single distinct node in the ring.
 pub trait Node: Ord {
     /// Retrieve a name that uniquely identifies the particular Node.
-    fn get_name(&self) -> Vec<u8>;
+    fn get_name(&self) -> Cow<[u8]>;
 }
 
 /// VirtualNode represents a single virtual node in the ring.
@@ -96,7 +98,9 @@ pub struct VirtualNode<N: Node + ?Sized> {
 
 impl<N: Node + ?Sized> VirtualNode<N> {
     fn new<H: Hasher>(hasher: &mut H, node: Arc<N>, vnid: VNID) -> Self {
-        let mut name = node.get_name();
+        let node_name = node.get_name();
+        let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<VNID>());
+        name.extend(&*node_name);
         name.extend(&vnid.to_ne_bytes());
         let name = hasher.digest(&name);
         VirtualNode { name, node, vnid }
@@ -360,8 +364,8 @@ mod tests {
     }
 
     impl Node for String {
-        fn get_name(&self) -> Vec<u8> {
-            self.clone().into_bytes()
+        fn get_name(&self) -> Cow<[u8]> {
+            Cow::Borrowed(&self.as_bytes())
         }
     }
     #[test]
@@ -379,8 +383,8 @@ mod tests {
     }
 
     impl Node for &str {
-        fn get_name(&self) -> Vec<u8> {
-            self.bytes().collect()
+        fn get_name(&self) -> Cow<[u8]> {
+            Cow::Borrowed(self.as_bytes())
         }
     }
     #[test]
