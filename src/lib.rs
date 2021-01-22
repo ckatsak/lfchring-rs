@@ -91,7 +91,7 @@ impl Hasher for DefaultStdHasher {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Node represents a single distinct node in the ring.
-pub trait Node: Ord {
+pub trait Node {
     /// Retrieve a name that uniquely identifies the particular Node.
     fn get_name(&self) -> Cow<[u8]>;
 }
@@ -128,7 +128,6 @@ impl<N: Node + ?Sized> Clone for VirtualNode<N> {
 // Required for `Eq`.
 impl<N: Node + ?Sized> PartialEq for VirtualNode<N> {
     fn eq(&self, other: &Self) -> bool {
-        //self.name.eq(&other.name)
         self.name == other.name
     }
 }
