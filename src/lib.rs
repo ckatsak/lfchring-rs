@@ -1,4 +1,8 @@
 //! TODO: Crate documentation
+//!
+//! - In multi-threaded context, `HashRing` should be explicitly wrapped in `Arc`. This is a
+//! deliberate, to expose the hidden cost of atomic reference counting and also give a chance to
+//! single-threaded contexts to opt out of it.
 
 //#![deny(missing_docs)]
 #![allow(dead_code, unused_variables, unused_imports)]
@@ -11,7 +15,7 @@ use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned};
+use crossbeam_epoch::{self as epoch, Atomic, Owned};
 //use itertools::Itertools;
 use log::trace;
 use thiserror::Error;
@@ -59,7 +63,7 @@ struct DefaultStdHasher;
 impl DefaultStdHasher {
     #[inline]
     fn new() -> Self {
-        DefaultStdHasher {}
+        Default::default()
     }
 }
 
@@ -113,7 +117,7 @@ impl<N: Node + ?Sized> VirtualNode<N> {
 
 impl<N: Node + ?Sized> Clone for VirtualNode<N> {
     fn clone(&self) -> Self {
-        VirtualNode {
+        Self {
             name: self.name.clone(),
             node: Arc::clone(&self.node),
             vnid: self.vnid,
@@ -199,48 +203,75 @@ impl<N: Node + ?Sized, H: Hasher> Clone for HashRing<N, H> {
         // modify the pointer, and none of them sets it to null.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
         // Clone the copy of the inner state and wrap it in a new `Atomic` and a new `HashRing`.
-        HashRing {
+        Self {
             inner: Atomic::new(inner.clone()),
         }
     }
 }
 
 impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
-    /// Creates a new `HashRing`, properly initialized based on the given parameters, using the
-    /// default `Hasher` implementation, which is merely a wrapper for
-    /// `std::collections::hash_map::DefaultHasher`.
+    /// Create a new `HashRing` configured with the given parameters. It uses a `Hasher` based on
+    /// `std::collections::hash_map::DefaultHasher` and initially contains the `VirtualNode`s of
+    /// the given `nodes`.
     #[inline]
-    pub fn new(vnodes_per_node: VNID, replication_factor: u8, nodes: &[Arc<N>]) -> Result<Self> {
-        Self::with_hasher(
+    pub fn with_nodes(
+        vnodes_per_node: VNID,
+        replication_factor: u8,
+        nodes: &[Arc<N>],
+    ) -> Result<Self> {
+        Self::with_hasher_and_nodes(
             DefaultStdHasher::new(),
             vnodes_per_node,
             replication_factor,
             nodes,
         )
     }
+
+    /// Create a new `HashRing` configured with the given parameters. It uses a `Hasher` based on
+    /// `std::collections::hash_map::DefaultHasher` and it is initially empty.
+    ///
+    /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
+    /// if no nodes are supplied at all?
+    #[inline]
+    pub fn new(vnodes_per_node: VNID, replication_factor: u8) -> Result<Self> {
+        Self::with_hasher_and_nodes(
+            DefaultStdHasher::new(),
+            vnodes_per_node,
+            replication_factor,
+            &[],
+        )
+    }
 }
 
 impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     /// Creates a new `HashRing`, properly initialized based on the given parameters, including the
-    /// given `Hasher`.
-    pub fn with_hasher(
+    /// given `Hasher`. TODO
+    pub fn with_hasher_and_nodes(
         hasher: H,
         vnodes_per_node: VNID,
         replication_factor: u8,
         nodes: &[Arc<N>],
     ) -> Result<Self> {
         let mut inner = HashRingState::empty(hasher, vnodes_per_node, replication_factor);
-        //let mut inner = HashRingState::empty(hasher, vnodes_per_node, replication_factor, nodes);
         inner.insert(nodes)?;
-        Ok(HashRing {
+        Ok(Self {
             inner: Atomic::new(inner),
         })
+    }
+
+    /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
+    /// if no nodes are supplied at all?
+    #[inline]
+    pub fn with_hasher(hasher: H, vnodes_per_node: VNID, replication_factor: u8) -> Result<Self> {
+        Self::with_hasher_and_nodes(hasher, vnodes_per_node, replication_factor, &[])
     }
 
     pub fn len_nodes(&self) -> usize {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
-        // SAFETY: TODO
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
         unsafe { inner.as_ref().expect("inner HashRingState is null!") }.len_nodes()
         //unsafe { inner.deref() }.len_nodes()
     }
@@ -248,7 +279,9 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     pub fn len_virtual_nodes(&self) -> usize {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
-        // SAFETY: TODO
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
         unsafe { inner.as_ref().expect("inner HashRingState is null!") }.len_virtual_nodes()
         //unsafe { inner.deref() }.len_virtual_nodes()
     }
@@ -353,8 +386,8 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     }
 }
 
-unsafe impl<N: Node + ?Sized, H: Hasher> Send for HashRing<N, H> {}
-unsafe impl<N: Node + ?Sized, H: Hasher> Sync for HashRing<N, H> {} // FIXME
+//unsafe impl<N: Node + ?Sized, H: Hasher> Send for HashRing<N, H> {}
+//unsafe impl<N: Node + ?Sized, H: Hasher> Sync for HashRing<N, H> {} // FIXME
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -374,25 +407,19 @@ struct HashRingState<N: Node + ?Sized, H: Hasher> {
 
 impl<N: Node + ?Sized, H: Hasher> Clone for HashRingState<N, H> {
     fn clone(&self) -> Self {
-        //let mut vnodes = BTreeSet::new();
-        //for vn in self.vnodes.iter() {
-        //    vnodes.insert(vn.clone());
-        //}
-        HashRingState {
+        Self {
             hasher: H::default(),
             vnodes_per_node: self.vnodes_per_node,
             replication_factor: self.replication_factor,
-            //vnodes,
             vnodes: self.vnodes.clone(),
         }
     }
 }
 
 impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
-    //fn empty(hasher: H, vnodes_per_node: VNID, replication_factor: u8, nodes: &[Arc<N>]) -> Self{
     #[inline]
     fn empty(hasher: H, vnodes_per_node: VNID, replication_factor: u8) -> Self {
-        HashRingState {
+        Self {
             hasher,
             vnodes_per_node,
             replication_factor,
@@ -403,6 +430,9 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     /// First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
     /// any of them is already present in the current vnodes map to make sure no collision occurs.
     /// Finally, merge the new vnodes into the old ones.
+    ///
+    /// NOTE: If any of the newly created `VirtualNode`s collides with an already existing one,
+    /// none of the new `nodes` is inserted in the ring.
     fn insert(&mut self, nodes: &[Arc<N>]) -> Result<()> {
         let mut new = BTreeSet::new();
         for node in nodes {
@@ -423,6 +453,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     }
 
     #[allow(dead_code)]
+    #[deprecated]
     fn fix_replica_owners(&mut self) {
         //for (curr, owners) in self.vnodes.iter_mut() {
         //    //
@@ -550,7 +581,7 @@ mod tests {
         init();
 
         let nodes = vec![Arc::new("Node1"), Arc::new("Node2"), Arc::new("Node3")];
-        let ring = HashRing::new(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
 
         assert!(ring.is_ok());
         let ring = ring.unwrap();
@@ -567,7 +598,7 @@ mod tests {
         init();
 
         let nodes = vec![Arc::new("Node1"), Arc::new("Node1"), Arc::new("Node1")];
-        let ring = HashRing::new(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
         eprintln!("ring = {:#?}", ring);
         assert!(ring.is_err());
         //let ring = ring.unwrap();
@@ -582,7 +613,7 @@ mod tests {
         init();
 
         let nodes = vec![Arc::new("Node1"), Arc::new("Node2"), Arc::new("Node3")];
-        let ring = HashRing::new(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes)?;
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes)?;
         eprintln!("ring = {:#?}", ring);
         eprintln!("ring.len_nodes() = {:#?}", ring.len_nodes());
         eprintln!("ring.len_virtual_nodes() = {:#?}", ring.len_virtual_nodes());
@@ -601,13 +632,13 @@ mod tests {
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
-        let ring = HashRing::new(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
 
         const ITERS: usize = 1000;
-        let rnd_ins = |ring: Arc<HashRing<String, DefaultStdHasher>>| {
+        let rand_insertions = |ring: Arc<HashRing<String, DefaultStdHasher>>| {
             let mut r = rand::thread_rng();
             let mut inserted_nodes = HashSet::new();
-            for i in 0..ITERS {
+            for _ in 0..ITERS {
                 // sleep for random duration (ms)
                 let sleep_dur = r.gen_range(50..100);
                 thread::sleep(Duration::from_millis(sleep_dur));
@@ -632,30 +663,27 @@ mod tests {
             inserted_nodes
         };
 
+        // Wrap the ring in an Arc and clone it once for each thread.
         let ring = Arc::new(ring);
         let r1 = Arc::clone(&ring);
-        let t1 = thread::spawn(move || rnd_ins(r1));
         let r2 = Arc::clone(&ring);
-        let t2 = thread::spawn(move || rnd_ins(r2));
+        // Spawn the two threads...
+        let t1 = thread::spawn(move || rand_insertions(r1));
+        let t2 = thread::spawn(move || rand_insertions(r2));
+        // ...and wait for them to finish.
+        let s1 = t1.join().unwrap();
+        let s2 = t2.join().unwrap();
 
-        let s1 = t1
-            .join()
-            .map_err(|err| panic!("thread1 returned {:?}", err))
-            .unwrap();
-        let s2 = t2
-            .join()
-            .map_err(|err| panic!("thread1 returned {:?}", err))
-            .unwrap();
-
+        // Their results must be disjoint...
+        assert!(s1.is_disjoint(&s2));
+        // ...so create their union.
         let union: BTreeSet<_> = s1.union(&s2).collect();
+        assert_eq!(union.len(), s1.len() + s2.len());
         //debug!("Thread sets:\ns1 = {:?}\ns2 = {:?}", s1, s2);
         //debug!("s1 ⋃ s2 = {:?}", union);
         debug!("Thr1 successfully inserted {} distinct nodes.", s1.len());
         debug!("Thr2 successfully inserted {} distinct nodes.", s2.len());
-        debug!(
-            "Both threads inserted {} distinct nodes in total.",
-            union.len()
-        );
+        debug!("A total of {} distinct nodes were inserted.", union.len());
         debug!("ring.len_nodes() = {}", ring.len_nodes());
         debug!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
         assert_eq!(union.len(), ring.len_nodes());
