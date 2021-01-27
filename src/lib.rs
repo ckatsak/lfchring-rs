@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
+use std::fmt::Write;
 use std::hash::{Hash, Hasher as StdHasher};
 use std::mem;
 use std::sync::atomic::Ordering;
@@ -32,6 +33,9 @@ pub type VNID = u16;
 
 pub type Result<T> = std::result::Result<T, HashRingError>;
 
+// TODO: Reporting `VirtualNode`s as `String`s is probably useless. Is there any case where
+// exposing actual information (e.g., some struct) to the caller through `HashRingError` could turn
+// out to be useful?
 #[derive(Debug, Error)]
 pub enum HashRingError {
     #[error("Virtual node {0:?} is already in the ring")]
@@ -163,13 +167,23 @@ impl<N: Node + ?Sized> Hash for VirtualNode<N> {
 
 impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:02x?} ({:02x?}-{})",
-            self.name,
-            self.node.get_name(),
-            self.vnid
-        )
+        // No allocations at all:
+        //write!(
+        //    f,
+        //    "{:02x?} ({:02x?}-{})",
+        //    self.name,
+        //    self.node.get_name(),
+        //    self.vnid
+        //)
+
+        // >=2 `String` allocations:
+        let mut name_hex = String::with_capacity(2 * self.name.len());
+        self.name
+            .iter()
+            .for_each(|byte| write!(name_hex, "{:02x}", byte).unwrap());
+        let node = &self.node.get_name();
+        let node = String::from_utf8_lossy(&node);
+        write!(f, "{} ({}-{})", name_hex, node, self.vnid)
     }
 }
 
