@@ -64,16 +64,9 @@ pub trait Hasher: Default {
 #[derive(Debug, Default)]
 struct DefaultStdHasher;
 
-impl DefaultStdHasher {
-    #[inline]
-    fn new() -> Self {
-        Default::default()
-    }
-}
-
 impl Hasher for DefaultStdHasher {
     fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let mut h = DefaultHasher::new();
+        let mut h = DefaultHasher::default();
         h.write(bytes);
         h.finish().to_ne_bytes().to_vec()
     }
@@ -233,7 +226,7 @@ impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
         nodes: &[Arc<N>],
     ) -> Result<Self> {
         Self::with_hasher_and_nodes(
-            DefaultStdHasher::new(),
+            DefaultStdHasher::default(),
             vnodes_per_node,
             replication_factor,
             nodes,
@@ -248,7 +241,7 @@ impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
     #[inline]
     pub fn new(vnodes_per_node: VNID, replication_factor: u8) -> Result<Self> {
         Self::with_hasher_and_nodes(
-            DefaultStdHasher::new(),
+            DefaultStdHasher::default(),
             vnodes_per_node,
             replication_factor,
             &[],
@@ -560,7 +553,7 @@ mod tests {
         let s1 = String::from("Node1");
         //let a1: Arc<dyn Node> = Arc::new(s1);
         let a1 = Arc::new(s1);
-        let mut h = DefaultStdHasher::new();
+        let mut h = DefaultStdHasher::default();
 
         let vn1 = VirtualNode::new(&mut h, Arc::clone(&a1), 1);
         let vn2 = VirtualNode::new(&mut h, Arc::clone(&a1), 2);
@@ -578,7 +571,7 @@ mod tests {
     fn node_str() {
         let s1 = "Node1";
         let a1 = Arc::new(s1);
-        let mut h = DefaultStdHasher::new();
+        let mut h = DefaultStdHasher::default();
 
         let vn1 = VirtualNode::new(&mut h, Arc::clone(&a1), 1);
         let vn2 = VirtualNode::new(&mut h, Arc::clone(&a1), 2);
