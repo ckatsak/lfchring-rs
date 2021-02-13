@@ -1,8 +1,8 @@
 //! TODO: Crate documentation
 //!
-//! - In multi-threaded context, `HashRing` should be explicitly wrapped in `Arc`. This is a
-//! deliberate, to expose the hidden cost of atomic reference counting and also give a chance to
-//! single-threaded contexts to opt out of it.
+//! - In multi-threaded context, `HashRing` should be explicitly wrapped in `Arc`. This is
+//! deliberate, to expose the hidden cost of atomic reference counting to the callers and also give
+//! a chance to single-threaded contexts to opt out of it.
 
 //#![deny(missing_docs)]
 #![allow(dead_code, unused_variables, unused_imports)]
@@ -17,7 +17,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crossbeam_epoch::{self as epoch, Atomic, Owned};
-//use itertools::Itertools;
 use log::trace;
 use thiserror::Error;
 
@@ -38,6 +37,8 @@ pub type Result<T> = std::result::Result<T, HashRingError>;
 // out to be useful?
 #[derive(Debug, Error)]
 pub enum HashRingError {
+    #[error("Invalid configuration: replication factor of {0} and {1} virtual nodes per node")]
+    InvalidConfiguration(u8, VNID),
     #[error("Virtual node {0:?} is already in the ring")]
     VirtualNodeAlreadyPresent(String),
     #[error("Virtual node {0:?} is not in the ring")]
@@ -99,6 +100,7 @@ pub struct VirtualNode<N: Node + ?Sized> {
     name: Vec<u8>,
     node: Arc<N>,
     vnid: VNID,
+    replica_owners: Option<Vec<Arc<N>>>,
 }
 
 impl<N: Node + ?Sized> VirtualNode<N> {
@@ -108,7 +110,22 @@ impl<N: Node + ?Sized> VirtualNode<N> {
         name.extend(&*node_name);
         name.extend(&vnid.to_ne_bytes());
         let name = hasher.digest(&name);
-        VirtualNode { name, node, vnid }
+        VirtualNode {
+            name,
+            node,
+            vnid,
+            replica_owners: None, // XXX: `replica_owners` still unpopulated!
+        }
+    }
+
+    pub fn replica_owners(&self) -> &[Arc<N>] {
+        // By the time the `VirtualNode` became publicly accessible, its `replica_owners` field
+        // must had already been populated via a call to `HashRingState::fix_replica_owners()`.
+        // Therefore, unwrapping should never fail here.
+        &self
+            .replica_owners
+            .as_ref()
+            .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
     }
 }
 
@@ -118,6 +135,7 @@ impl<N: Node + ?Sized> Clone for VirtualNode<N> {
             name: self.name.clone(),
             node: Arc::clone(&self.node),
             vnid: self.vnid,
+            replica_owners: None, // XXX: `replica_owners` still unpopulated!
         }
     }
 }
@@ -258,7 +276,14 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         replication_factor: u8,
         nodes: &[Arc<N>],
     ) -> Result<Self> {
-        let mut inner = HashRingState::empty(hasher, vnodes_per_node, replication_factor);
+        if replication_factor == 0 || vnodes_per_node == 0 {
+            return Err(HashRingError::InvalidConfiguration(
+                replication_factor,
+                vnodes_per_node,
+            ));
+        }
+        let mut inner =
+            HashRingState::with_capacity(nodes.len(), hasher, vnodes_per_node, replication_factor);
         inner.insert(nodes)?;
         Ok(Self {
             inner: Atomic::new(inner),
@@ -408,7 +433,7 @@ struct HashRingState<N: Node + ?Sized, H: Hasher> {
     hasher: H,
     vnodes_per_node: VNID,
     replication_factor: u8,
-    vnodes: BTreeSet<VirtualNode<N>>,
+    vnodes: Vec<VirtualNode<N>>,
 }
 
 impl<N: Node + ?Sized, H: Hasher> Clone for HashRingState<N, H> {
@@ -424,15 +449,19 @@ impl<N: Node + ?Sized, H: Hasher> Clone for HashRingState<N, H> {
 
 impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     #[inline]
-    fn empty(hasher: H, vnodes_per_node: VNID, replication_factor: u8) -> Self {
+    fn with_capacity(
+        capacity: usize,
+        hasher: H,
+        vnodes_per_node: VNID,
+        replication_factor: u8,
+    ) -> Self {
         Self {
             hasher,
             vnodes_per_node,
             replication_factor,
-            vnodes: BTreeSet::new(),
+            vnodes: Vec::with_capacity(capacity),
         }
     }
-
     /// First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
     /// any of them is already present in the current vnodes map to make sure no collision occurs.
     /// Finally, merge the new vnodes into the old ones.
@@ -446,7 +475,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
                 let vn = VirtualNode::new(&mut self.hasher, Arc::clone(&node), vnid);
                 // We need to not only check whether vn is already in the ring, but also whether
                 // it is present among the vnodes we are about to extend the ring by.
-                if self.vnodes.contains(&vn) || !new.insert(vn.clone()) {
+                if self.vnodes.binary_search(&vn).is_ok() || !new.insert(vn.clone()) {
                     // FIXME: How to avoid cloning the VirtualNode ^ but also be able to use it in:
                     return Err(HashRingError::VirtualNodeAlreadyPresent(format!("{}", vn)));
                 }
@@ -454,59 +483,59 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
             }
         }
         self.vnodes.extend(new);
-        //self.fix_replica_owners();
+        self.vnodes.sort_unstable();
+        self.fix_replica_owners();
         Ok(())
     }
 
-    #[allow(dead_code)]
-    #[deprecated]
     fn fix_replica_owners(&mut self) {
-        //for (curr, owners) in self.vnodes.iter_mut() {
-        //    //
-        //}
+        for i in 0..self.vnodes.len() {
+            // SAFETY: `i` is always in range `0..self.vnodes.len()`
+            let curr_vn = unsafe { self.vnodes.get_unchecked(i) };
 
-        //for (i, (curr, owners)) in self.vnodes.iter_mut().enumerate() {
-        //    for (next, _) in self
-        //        .vnodes
-        //        .iter()
-        //        .cycle()
-        //        .skip(i)
-        //        .take(self.replication_factor as usize)
-        //    {
-        //        //
-        //    }
-        //}
+            let mut replica_owners = Vec::with_capacity(self.replication_factor as usize);
+            // Some capacity might be wasted here  ^^  but we prefer it over reallocation.
+            let original_owner = &curr_vn.node;
+            replica_owners.push(Arc::clone(original_owner));
 
-        //for (curr, owners) in self.vnodes.iter_mut().multipeek() {
-        //    // Push my own...
-        //    owners.push(Arc::clone(&curr.node));
-        //    // ...and then push the next k-1 too.
-        //    for k in 0..self.replication_factor - 1 {
-        //        //
-        //    }
-        //}
+            // Number of subsequent replica-owning nodes remaining to be found
+            let mut k = self.replication_factor - 1;
 
-        // Apparently, Rust does not allow the use of `cycle()` on an `iter_mut()` because
-        // `cycle()` requires `Clone`.
-        // Therefore, the next line is rejected by the compiler, whereas the line after that is
-        // accepted (where `iter()` is used instead of `iter_mut()`).
-        // The plan was to create a mutable iterator over the key-value pairs of the `BTreeMap`
-        // (where the keys are the `VirtualNode`s and the values are `Vec<Arc<N>>`, which represent
-        // the nodes that hold replicas of the `VirtualNode` in the ring), transform it to a
-        // `MultiPeek` (see crate `Itertools`), then create a `Cycle` from it, and use it to peek
-        // the next `VirtualNode`s until either:
-        //  - the next k-1 distinct nodes are determined, or
-        //  - the cycle has been exhausted and I am back to current `VirtualNode`.
-        // However, as a result of the above limitation, I cannot find any way to actually
-        // construct the loop, as I did in the Go implementation.
-        // To work around this, I will probably use a `BTreeSet` rather than a `BTreeMap` to store
-        // the `VirtualNode`s of the ring, and probably construct the replica owners on the fly,
-        // upon request, by creating a Cycle from an immutable `iter()`, and then cloning the
-        // distinct nodes as they are found.
-        //let iter = self.vnodes.iter_mut().enumerate().multipeek().cycle();
-        //let iter = self.vnodes.iter().enumerate().multipeek().cycle();
+            for (j, vn) in self
+                .vnodes
+                .iter()
+                .enumerate()
+                .cycle()
+                .skip((i + 1) % self.vnodes.len())
+            {
+                // If all replica owners for this vnode have been determined, break.
+                // Similarly, if we wrapped around the ring back to ourselves, break, even if k > 0
+                // (which would mean that replication_factor > # of distinct ring nodes).
+                if k == 0 || j == i {
+                    break;
+                }
+                // Since we want distinct nodes only in `replica_owners`, make sure `vn.node` is
+                // not already in.
+                let mut node_already_in = false;
+                for node in &replica_owners {
+                    if vn.node.hashring_node_id() == node.hashring_node_id() {
+                        node_already_in = true;
+                        break;
+                    }
+                }
+                // If `vn.node` is not already in, get it in, and decrease the number of distinct
+                // nodes remaining to be found.
+                if !node_already_in {
+                    replica_owners.push(Arc::clone(&vn.node));
+                    k -= 1;
+                }
+            }
 
-        unimplemented!()
+            // Store the replica owners we just found for the current vnode, in the current vnode.
+            // SAFETY: `i` is always in range `0..self.vnodes.len()`
+            let mut curr_vn = unsafe { self.vnodes.get_unchecked_mut(i) };
+            curr_vn.replica_owners = Some(replica_owners);
+        }
     }
 
     #[inline]
