@@ -90,7 +90,7 @@ impl Hasher for DefaultStdHasher {
 /// Node represents a single distinct node in the ring.
 pub trait Node {
     /// Retrieve a name that uniquely identifies the particular Node.
-    fn get_name(&self) -> Cow<[u8]>;
+    fn hashring_node_id(&self) -> Cow<[u8]>;
 }
 
 /// VirtualNode represents a single virtual node in the ring.
@@ -103,7 +103,7 @@ pub struct VirtualNode<N: Node + ?Sized> {
 
 impl<N: Node + ?Sized> VirtualNode<N> {
     fn new<H: Hasher>(hasher: &mut H, node: Arc<N>, vnid: VNID) -> Self {
-        let node_name = node.get_name();
+        let node_name = node.hashring_node_id();
         let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<VNID>());
         name.extend(&*node_name);
         name.extend(&vnid.to_ne_bytes());
@@ -165,7 +165,7 @@ impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
         //    f,
         //    "{:02x?} ({:02x?}-{})",
         //    self.name,
-        //    self.node.get_name(),
+        //    self.node.hashring_node_id(),
         //    self.vnid
         //)
 
@@ -174,7 +174,7 @@ impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
         self.name
             .iter()
             .for_each(|byte| write!(name_hex, "{:02x}", byte).unwrap());
-        let node = &self.node.get_name();
+        let node = &self.node.hashring_node_id();
         let node = String::from_utf8_lossy(&node);
         write!(f, "{} ({}-{})", name_hex, node, self.vnid)
     }
@@ -544,7 +544,7 @@ mod tests {
     }
 
     impl Node for String {
-        fn get_name(&self) -> Cow<[u8]> {
+        fn hashring_node_id(&self) -> Cow<[u8]> {
             Cow::Borrowed(&self.as_bytes())
         }
     }
@@ -563,7 +563,7 @@ mod tests {
     }
 
     impl Node for &str {
-        fn get_name(&self) -> Cow<[u8]> {
+        fn hashring_node_id(&self) -> Cow<[u8]> {
             Cow::Borrowed(self.as_bytes())
         }
     }
