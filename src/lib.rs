@@ -7,7 +7,7 @@
 //#![deny(missing_docs)]
 #![allow(dead_code, unused_variables, unused_imports)]
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -178,6 +178,18 @@ impl<N: Node + ?Sized> Ord for VirtualNode<N> {
 impl<N: Node + ?Sized> Hash for VirtualNode<N> {
     fn hash<H: StdHasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
+    }
+}
+
+impl<N: Node + ?Sized> Borrow<[u8]> for VirtualNode<N> {
+    fn borrow(&self) -> &[u8] {
+        &self.name[..]
+    }
+}
+
+impl<N: Node + ?Sized> AsRef<[u8]> for VirtualNode<N> {
+    fn as_ref(&self) -> &[u8] {
+        &self.name[..]
     }
 }
 
@@ -448,6 +460,16 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     pub fn remove(&self, nodes: &[Arc<N>]) -> Result<()> {
         self.update(Update::Remove, nodes)
     }
+
+    pub fn has_virtual_node<K: Borrow<[u8]>>(&self, key: &K) -> bool {
+        let guard = epoch::pin();
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+        inner.has_virtual_node(key)
+    }
 }
 
 //unsafe impl<N: Node + ?Sized, H: Hasher> Send for HashRing<N, H> {}
@@ -632,6 +654,15 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     #[inline]
     fn len_virtual_nodes(&self) -> usize {
         self.vnodes.len()
+    }
+
+    fn has_virtual_node<K: Borrow<[u8]>>(&self, key: &K) -> bool {
+        self.vnodes
+            .binary_search_by(|vn| {
+                let name: &[u8] = &vn.name;
+                name.cmp(key.borrow())
+            })
+            .is_ok()
     }
 }
 
@@ -899,6 +930,69 @@ mod tests {
                 ring.len_virtual_nodes(),
                 (NUM_NODES - (node_id + 1)) * VNODES_PER_NODE as usize
             );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_has_virtual_node_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        //debug!("Hash Ring String Representation:\n{}", ring);
+        assert_eq!(ring.len_nodes(), NUM_NODES);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            NUM_NODES * VNODES_PER_NODE as usize
+        );
+
+        // Test `HashRing::has_virtual_node()`
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            for vnid in 0..VNODES_PER_NODE {
+                // Assert existence based on `VirtualNode`
+                let vn = VirtualNode::new(&mut DefaultStdHasher::default(), Arc::clone(&n), vnid);
+                assert!(ring.has_virtual_node(&vn));
+
+                // Assert existence based on a raw `&[u8]`
+                let node_name = n.hashring_node_id();
+                let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<Vnid>());
+                name.extend(&*node_name);
+                name.extend(&vnid.to_ne_bytes());
+                let name = DefaultStdHasher::default().digest(&name);
+                assert!(ring.has_virtual_node(&name));
+            }
+
+            // Assert non-existence based on `VirtualNode`
+            let vn = VirtualNode::new(
+                &mut DefaultStdHasher::default(),
+                Arc::clone(&n),
+                VNODES_PER_NODE,
+            );
+            assert!(!ring.has_virtual_node(&vn));
+
+            // Assert non-existence based on a raw `&[u8]`
+            let node_name = n.hashring_node_id();
+            let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<Vnid>());
+            name.extend(&*node_name);
+            name.extend(&VNODES_PER_NODE.to_ne_bytes());
+            let name = DefaultStdHasher::default().digest(&name);
+            assert!(!ring.has_virtual_node(&name));
+        }
+
+        // Assert non-existence based on completely random raw `&[u8]`s
+        for v in vec![vec![0u8, 1, 2, 3, 4, 5], vec![42u8; 142]].iter() {
+            assert!(!ring.has_virtual_node(v));
         }
 
         Ok(())
