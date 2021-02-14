@@ -194,7 +194,22 @@ impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
             .for_each(|byte| write!(name_hex, "{:02x}", byte).unwrap());
         let node = &self.node.hashring_node_id();
         let node = String::from_utf8_lossy(&node);
-        write!(f, "{} ({}-{})", name_hex, node, self.vnid)
+
+        // Also display the replica owners, if they exist.
+        // One extra `String` allocation per replica owner.
+        write!(f, "{} ({}-{}) --> (", name_hex, node, self.vnid)?;
+        if self.replica_owners.is_some() {
+            for (i, owner) in self.replica_owners.as_ref().unwrap().iter().enumerate() {
+                write!(
+                    f,
+                    "{}, ",
+                    String::from_utf8_lossy(&owner.hashring_node_id())
+                )?
+            }
+        } else {
+            write!(f, "UNPOPULATED")?
+        }
+        write!(f, ")")
     }
 }
 
@@ -410,7 +425,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         unsafe {
             guard.defer_destroy(old_inner);
         }
-        // Flush to make the deferred execution of the destructor run as soon as possible.
+        // Flush to make the deferred execution of the destructor run as soon as possible. FIXME?
         guard.flush();
 
         Ok(())
@@ -419,6 +434,18 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
 
 //unsafe impl<N: Node + ?Sized, H: Hasher> Send for HashRing<N, H> {}
 //unsafe impl<N: Node + ?Sized, H: Hasher> Sync for HashRing<N, H> {} // FIXME
+
+impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRing<N, H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let guard = epoch::pin();
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+        write!(f, "{}", inner)
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -546,6 +573,22 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     #[inline]
     fn len_virtual_nodes(&self) -> usize {
         self.vnodes.len()
+    }
+}
+
+impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRingState<N, H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "HashRingState ({} nodes X {} virtual, replication factor = {}) {{",
+            self.len_nodes(),
+            self.vnodes_per_node,
+            self.replication_factor
+        )?;
+        for (i, vn) in self.vnodes.iter().enumerate() {
+            writeln!(f, "\t- {:>6}. {}", i, vn)?
+        }
+        writeln!(f, "}}")
     }
 }
 
@@ -726,6 +769,29 @@ mod tests {
             union.len() * VNODES_PER_NODE as usize,
             ring.len_virtual_nodes()
         );
+
+        debug!("Hash Ring String Representation:\n{}", ring);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_replf_gt_nodes() -> Result<()> {
+        const VNODES_PER_NODE: VNID = 2;
+        const REPLICATION_FACTOR: u8 = 4;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        const NUM_NODES: usize = 3;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+
+        debug!("ring.len_nodes() = {}", ring.len_nodes());
+        debug!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
+        debug!("Hash Ring String Representation:\n{}", ring);
 
         Ok(())
     }
