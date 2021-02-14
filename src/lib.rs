@@ -28,7 +28,7 @@ use thiserror::Error;
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub type VNID = u16;
+pub type Vnid = u16;
 
 pub type Result<T> = std::result::Result<T, HashRingError>;
 
@@ -38,7 +38,7 @@ pub type Result<T> = std::result::Result<T, HashRingError>;
 #[derive(Debug, Error)]
 pub enum HashRingError {
     #[error("Invalid configuration: replication factor of {0} and {1} virtual nodes per node")]
-    InvalidConfiguration(u8, VNID),
+    InvalidConfiguration(u8, Vnid),
     #[error("Virtual node {0:?} is already in the ring")]
     VirtualNodeAlreadyPresent(String),
     #[error("Virtual node {0:?} is not in the ring")]
@@ -104,14 +104,14 @@ pub trait Node {
 pub struct VirtualNode<N: Node + ?Sized> {
     name: Vec<u8>,
     node: Arc<N>,
-    vnid: VNID,
+    vnid: Vnid,
     replica_owners: Option<Vec<Arc<N>>>,
 }
 
 impl<N: Node + ?Sized> VirtualNode<N> {
-    fn new<H: Hasher>(hasher: &mut H, node: Arc<N>, vnid: VNID) -> Self {
+    fn new<H: Hasher>(hasher: &mut H, node: Arc<N>, vnid: Vnid) -> Self {
         let node_name = node.hashring_node_id();
-        let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<VNID>());
+        let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<Vnid>());
         name.extend(&*node_name);
         name.extend(&vnid.to_ne_bytes());
         let name = hasher.digest(&name);
@@ -259,7 +259,7 @@ impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
     /// the given `nodes`.
     #[inline]
     pub fn with_nodes(
-        vnodes_per_node: VNID,
+        vnodes_per_node: Vnid,
         replication_factor: u8,
         nodes: &[Arc<N>],
     ) -> Result<Self> {
@@ -277,7 +277,7 @@ impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
     /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
     /// if no nodes are supplied at all?
     #[inline]
-    pub fn new(vnodes_per_node: VNID, replication_factor: u8) -> Result<Self> {
+    pub fn new(vnodes_per_node: Vnid, replication_factor: u8) -> Result<Self> {
         Self::with_hasher_and_nodes(
             DefaultStdHasher::default(),
             vnodes_per_node,
@@ -292,7 +292,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     /// given `Hasher`. TODO
     pub fn with_hasher_and_nodes(
         hasher: H,
-        vnodes_per_node: VNID,
+        vnodes_per_node: Vnid,
         replication_factor: u8,
         nodes: &[Arc<N>],
     ) -> Result<Self> {
@@ -313,7 +313,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
     /// if no nodes are supplied at all?
     #[inline]
-    pub fn with_hasher(hasher: H, vnodes_per_node: VNID, replication_factor: u8) -> Result<Self> {
+    pub fn with_hasher(hasher: H, vnodes_per_node: Vnid, replication_factor: u8) -> Result<Self> {
         Self::with_hasher_and_nodes(hasher, vnodes_per_node, replication_factor, &[])
     }
 
@@ -476,7 +476,7 @@ impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRing<N, H> {
 #[derive(Debug)]
 struct HashRingState<N: Node + ?Sized, H: Hasher> {
     hasher: H,
-    vnodes_per_node: VNID,
+    vnodes_per_node: Vnid,
     replication_factor: u8,
     vnodes: Vec<VirtualNode<N>>,
 }
@@ -497,7 +497,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     fn with_capacity(
         capacity: usize,
         hasher: H,
-        vnodes_per_node: VNID,
+        vnodes_per_node: Vnid,
         replication_factor: u8,
     ) -> Self {
         Self {
@@ -542,7 +542,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
             .collect::<Vec<_>>();
         let max_name_len = node_names.iter().map(|name| name.len()).max().unwrap();
 
-        let mut name = Vec::with_capacity(max_name_len + mem::size_of::<VNID>());
+        let mut name = Vec::with_capacity(max_name_len + mem::size_of::<Vnid>());
         for node_name in node_names {
             for vnid in 0..self.vnodes_per_node {
                 name.clear();
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn new_ring() {
-        const VNODES_PER_NODE: VNID = 4;
+        const VNODES_PER_NODE: Vnid = 4;
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn new_ring_already_in() {
-        const VNODES_PER_NODE: VNID = 4;
+        const VNODES_PER_NODE: Vnid = 4;
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_insert_singlethr_01() -> Result<()> {
-        const VNODES_PER_NODE: VNID = 4;
+        const VNODES_PER_NODE: Vnid = 4;
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn test_insert_multithr_01() -> Result<()> {
-        const VNODES_PER_NODE: VNID = 4;
+        const VNODES_PER_NODE: Vnid = 4;
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn test_replf_gt_nodes() -> Result<()> {
-        const VNODES_PER_NODE: VNID = 2;
+        const VNODES_PER_NODE: Vnid = 2;
         const REPLICATION_FACTOR: u8 = 4;
         init();
 
@@ -863,7 +863,7 @@ mod tests {
 
     #[test]
     fn test_remove_singlethr_01() -> Result<()> {
-        const VNODES_PER_NODE: VNID = 3;
+        const VNODES_PER_NODE: Vnid = 3;
         const REPLICATION_FACTOR: u8 = 6;
         init();
 
