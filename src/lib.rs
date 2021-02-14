@@ -47,6 +47,11 @@ pub enum HashRingError {
     ConcurrentModification,
 }
 
+enum Update {
+    Insert,
+    Remove,
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -332,7 +337,7 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         //unsafe { inner.deref() }.len_virtual_nodes()
     }
 
-    pub fn insert(&self, nodes: &[Arc<N>]) -> Result<()> {
+    fn update(&self, op: Update, nodes: &[Arc<N>]) -> Result<()> {
         // Pin current thread.
         let guard = epoch::pin();
 
@@ -369,8 +374,11 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         //  vvv  TODO: Modify the local copy to prepare it for the UPDATE part  vvv
         //
         // Modify the local copy of the inner state as deemed necessary (i.e., insert the new Nodes
-        // to the local copy of the inner state).
-        new_inner.insert(nodes)?;
+        // to the local copy of the inner state, or remove the provided old ones from it).
+        match op {
+            Update::Insert => new_inner.insert(nodes)?,
+            Update::Remove => new_inner.remove(nodes)?,
+        }
         let new_inner_ptr = Owned::new(new_inner);
         //
         //  ^^^  TODO: Modify the local copy to prepare it for the UPDATE part  ^^^
@@ -429,6 +437,16 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         guard.flush();
 
         Ok(())
+    }
+
+    #[inline]
+    pub fn insert(&self, nodes: &[Arc<N>]) -> Result<()> {
+        self.update(Update::Insert, nodes)
+    }
+
+    #[inline]
+    pub fn remove(&self, nodes: &[Arc<N>]) -> Result<()> {
+        self.update(Update::Remove, nodes)
     }
 }
 
@@ -509,9 +527,50 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
                 trace!("vnode '{}' has been included in the ring extension", vn);
             }
         }
+        // TODO: What happens with the reallocation here? It is completely uncontrolled for now.
         self.vnodes.extend(new);
         self.vnodes.sort_unstable();
         self.fix_replica_owners();
+        Ok(())
+    }
+
+    fn remove(&mut self, nodes: &[Arc<N>]) -> Result<()> {
+        let mut removed_indices = BTreeSet::new();
+        let node_names = nodes
+            .iter()
+            .map(|node| node.hashring_node_id())
+            .collect::<Vec<_>>();
+        let max_name_len = node_names.iter().map(|name| name.len()).max().unwrap();
+
+        let mut name = Vec::with_capacity(max_name_len + mem::size_of::<VNID>());
+        for node_name in node_names {
+            for vnid in 0..self.vnodes_per_node {
+                name.clear();
+                name.extend(&*node_name);
+                name.extend(&vnid.to_ne_bytes());
+                let vn = self.hasher.digest(&name);
+                if let Ok(index) = self.vnodes.binary_search_by(|e| e.name.cmp(&vn)) {
+                    trace!("Removing vnode '{:x?}' at index {}.", vn, index);
+                    removed_indices.insert(index);
+                } else {
+                    return Err(HashRingError::VirtualNodeAbsent(format!("{:x?}", vn)));
+                }
+            }
+        }
+
+        // TODO: Return the removed vnodes or not? I guess it would be best if the output of
+        //       `HashRing::remove` is consistent with the output of `HashRing::insert`.
+        let mut removed_vnodes = Vec::with_capacity(removed_indices.len());
+        // Indices must be visited in reverse (descending) order for the removal; otherwise, the
+        // indices of the virtual nodes to be removed in `self.vnodes` become invalid as they are
+        // all shifted towards the beginning of the vector on every removal.
+        for &index in removed_indices.iter().rev() {
+            let vn = self.vnodes.remove(index);
+            removed_vnodes.push(vn);
+        }
+        //assert!(self.vnodes.is_sorted());
+        self.fix_replica_owners();
+        //Ok(removed_vnodes) TODO
         Ok(())
     }
 
@@ -792,6 +851,55 @@ mod tests {
         debug!("ring.len_nodes() = {}", ring.len_nodes());
         debug!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
         debug!("Hash Ring String Representation:\n{}", ring);
+
+        assert_eq!(ring.len_nodes(), NUM_NODES);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            NUM_NODES * VNODES_PER_NODE as usize
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: VNID = 3;
+        const REPLICATION_FACTOR: u8 = 6;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        debug!("Hash Ring String Representation:\n{}", ring);
+        assert_eq!(ring.len_nodes(), NUM_NODES);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            NUM_NODES * VNODES_PER_NODE as usize
+        );
+
+        // Remove the nodes one by one
+        for node_id in 0..NUM_NODES {
+            assert_eq!(ring.len_nodes(), NUM_NODES - node_id);
+            assert_eq!(
+                ring.len_virtual_nodes(),
+                (NUM_NODES - node_id) * VNODES_PER_NODE as usize
+            );
+
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.remove(&[n])?;
+            debug!("Hash Ring String Representation:\n{}", ring);
+
+            assert_eq!(ring.len_nodes(), NUM_NODES - (node_id + 1));
+            assert_eq!(
+                ring.len_virtual_nodes(),
+                (NUM_NODES - (node_id + 1)) * VNODES_PER_NODE as usize
+            );
+        }
 
         Ok(())
     }
