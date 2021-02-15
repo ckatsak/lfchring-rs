@@ -182,12 +182,14 @@ impl<N: Node + ?Sized> Hash for VirtualNode<N> {
 }
 
 impl<N: Node + ?Sized> Borrow<[u8]> for VirtualNode<N> {
+    #[inline]
     fn borrow(&self) -> &[u8] {
         &self.name[..]
     }
 }
 
 impl<N: Node + ?Sized> AsRef<[u8]> for VirtualNode<N> {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.name[..]
     }
@@ -461,7 +463,10 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         self.update(Update::Remove, nodes)
     }
 
-    pub fn has_virtual_node<K: Borrow<[u8]>>(&self, key: &K) -> bool {
+    pub fn has_virtual_node<K>(&self, key: &K) -> bool
+    where
+        K: Borrow<[u8]>,
+    {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
@@ -469,6 +474,29 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
         // Acquire/Release orderings. FIXME?
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
         inner.has_virtual_node(key)
+    }
+
+    // returns a clone of the `VirtualNode`
+    pub fn virtual_node_for_key<K>(&self, key: &K) -> VirtualNode<N>
+    where
+        K: Borrow<[u8]>,
+    {
+        let guard = epoch::pin();
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+
+        let vn = inner.virtual_node_for_key(key);
+        let mut ret = vn.clone();
+        ret.replica_owners = Some(
+            vn.replica_owners
+                .as_ref()
+                .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
+                .clone(),
+        );
+        ret
     }
 }
 
@@ -664,6 +692,24 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
             })
             .is_ok()
     }
+
+    // returns a reference to the actual `VirtualNode` in `HashRingState.vnodes`
+    fn virtual_node_for_key<K>(&self, key: &K) -> &VirtualNode<N>
+    where
+        K: Borrow<[u8]>,
+    {
+        let index = self
+            .vnodes
+            .binary_search_by(|vn| {
+                let name: &[u8] = &vn.name;
+                name.cmp(key.borrow())
+            })
+            .unwrap_or_else(|index| index)
+            % self.vnodes.len();
+        // SAFETY: The remainder of the above integer division is always a usize between `0` and
+        //         `self.vnodes.len() - 1`, hence can be used as an index in `self.vnodes`.
+        unsafe { self.vnodes.get_unchecked(index) }
+    }
 }
 
 impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRingState<N, H> {
@@ -676,7 +722,7 @@ impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRingState<N, H> {
             self.replication_factor
         )?;
         for (i, vn) in self.vnodes.iter().enumerate() {
-            writeln!(f, "\t- {:>6}. {}", i, vn)?
+            writeln!(f, "\t- ({:0>6})\t{}", i, vn)?
         }
         writeln!(f, "}}")
     }
@@ -698,6 +744,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use hex_literal::hex;
     use log::{debug, error, trace, warn};
     use rand::prelude::*;
 
@@ -993,6 +1040,60 @@ mod tests {
         // Assert non-existence based on completely random raw `&[u8]`s
         for v in vec![vec![0u8, 1, 2, 3, 4, 5], vec![42u8; 142]].iter() {
             assert!(!ring.has_virtual_node(v));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_virtual_node_for_key_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        assert_eq!(ring.len_nodes(), NUM_NODES);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            NUM_NODES * VNODES_PER_NODE as usize
+        );
+
+        // Keys selected as `VirtualNode.name + 1`
+        let keys = vec![
+            hex!("232a8a941ee901c1"),
+            hex!("324317a375aa4201"),
+            hex!("4ff59699a3bacc04"),
+            hex!("62338d102fd1edce"),
+            hex!("6aad47fd1f3fc789"),
+            hex!("728254115d9da0a8"),
+            hex!("7cf6c43df9ff4b72"),
+            hex!("a416af15b94f0122"),
+            hex!("ab1c5045e605c275"),
+            hex!("acec6c33d08ac530"),
+            hex!("cbdaa742e68b020d"),
+            hex!("ed59d86868c13210"),
+        ];
+
+        // Remove the nodes one by one, checking the keys' distribution every time
+        for node_id in 0..NUM_NODES {
+            assert_eq!(ring.len_nodes(), NUM_NODES - node_id);
+            debug!("Hash Ring String Representation:\n{}", ring);
+
+            for key in &keys {
+                let vn = ring.virtual_node_for_key(key);
+                eprintln!("Key {:x?} is assigned to vnode {}", key, vn);
+            }
+
+            // Remove one node
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.remove(&[n])?;
         }
 
         Ok(())

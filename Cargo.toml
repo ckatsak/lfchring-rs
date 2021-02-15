@@ -8,10 +8,10 @@ edition = "2018"
 
 [dependencies]
 crossbeam-epoch = "0.9"
-itertools = "0.10"
 log = "0.4"
 thiserror = "1.0"
 
 [dev-dependencies]
 env_logger = "0.8"
+hex-literal = "0.3"
 rand = "0.8"
