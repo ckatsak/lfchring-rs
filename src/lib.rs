@@ -10,7 +10,7 @@
 use std::borrow::{Borrow, Cow};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
-use std::fmt::Write;
+use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
 use std::mem;
 use std::sync::atomic::Ordering;
@@ -79,7 +79,7 @@ impl Hasher for DefaultStdHasher {
 }
 
 //impl std::fmt::Debug for DefaultStdHasher {
-//    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 //        //write!(f, "std::collections::hash_map::DefaultHasher")
 //        write!(f, "DefaultStdHasher{{}}")
 //    }
@@ -101,14 +101,20 @@ pub trait Node {
 
 /// VirtualNode represents a single virtual node in the ring.
 #[derive(Debug)]
-pub struct VirtualNode<N: Node + ?Sized> {
+pub struct VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     name: Vec<u8>,
     node: Arc<N>,
     vnid: Vnid,
     replica_owners: Option<Vec<Arc<N>>>,
 }
 
-impl<N: Node + ?Sized> VirtualNode<N> {
+impl<N> VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn new<H: Hasher>(hasher: &mut H, node: Arc<N>, vnid: Vnid) -> Self {
         let node_name = node.hashring_node_id();
         let mut name = Vec::with_capacity(node_name.len() + mem::size_of::<Vnid>());
@@ -134,7 +140,10 @@ impl<N: Node + ?Sized> VirtualNode<N> {
     }
 }
 
-impl<N: Node + ?Sized> Clone for VirtualNode<N> {
+impl<N> Clone for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn clone(&self) -> Self {
         Self {
             name: self.name.clone(),
@@ -146,17 +155,23 @@ impl<N: Node + ?Sized> Clone for VirtualNode<N> {
 }
 
 // Required for `Eq`.
-impl<N: Node + ?Sized> PartialEq for VirtualNode<N> {
+impl<N> PartialEq for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
     }
 }
 
 // Required for `Ord`.
-impl<N: Node + ?Sized> Eq for VirtualNode<N> {}
+impl<N> Eq for VirtualNode<N> where N: Node + ?Sized {}
 
 // Required for `Ord`.
-impl<N: Node + ?Sized> PartialOrd for VirtualNode<N> {
+impl<N> PartialOrd for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.name.partial_cmp(&other.name)
     }
@@ -164,7 +179,10 @@ impl<N: Node + ?Sized> PartialOrd for VirtualNode<N> {
 
 // `Ord` is required to be able to store `VirtualNode` in a `BTreeSet`. Ordering `VirtualNode`s
 // should probably only depend on their `name`, therefore we implement it rather than derive it.
-impl<N: Node + ?Sized> Ord for VirtualNode<N> {
+impl<N> Ord for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.name.cmp(&other.name)
     }
@@ -175,28 +193,40 @@ impl<N: Node + ?Sized> Ord for VirtualNode<N> {
 //      if (x == y) then (hash(x) == hash(y))
 // It is also demonstrated here:
 //      https://doc.rust-lang.org/std/collections/index.html#insert-and-complex-keys
-impl<N: Node + ?Sized> Hash for VirtualNode<N> {
+impl<N> Hash for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     fn hash<H: StdHasher>(&self, hasher: &mut H) {
         self.name.hash(hasher);
     }
 }
 
-impl<N: Node + ?Sized> Borrow<[u8]> for VirtualNode<N> {
+impl<N> Borrow<[u8]> for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     #[inline]
     fn borrow(&self) -> &[u8] {
         &self.name[..]
     }
 }
 
-impl<N: Node + ?Sized> AsRef<[u8]> for VirtualNode<N> {
+impl<N> AsRef<[u8]> for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
     #[inline]
     fn as_ref(&self) -> &[u8] {
         &self.name[..]
     }
 }
 
-impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<N> Display for VirtualNode<N>
+where
+    N: Node + ?Sized,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         // No allocations at all:
         //write!(
         //    f,
@@ -246,11 +276,19 @@ impl<N: Node + ?Sized> std::fmt::Display for VirtualNode<N> {
 /// It features efficient support for virtual ring nodes per distinct node, as well as
 /// "automatically managed" data replication among the distinct node.
 #[derive(Debug)]
-pub struct HashRing<N: Node + ?Sized, H: Hasher> {
+pub struct HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     inner: Atomic<HashRingState<N, H>>,
 }
 
-impl<N: Node + ?Sized, H: Hasher> Clone for HashRing<N, H> {
+impl<N, H> Clone for HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     fn clone(&self) -> Self {
         // Pin the current thread.
         let guard = epoch::pin();
@@ -267,7 +305,10 @@ impl<N: Node + ?Sized, H: Hasher> Clone for HashRing<N, H> {
     }
 }
 
-impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
+impl<N> HashRing<N, DefaultStdHasher>
+where
+    N: Node + ?Sized,
+{
     /// Create a new `HashRing` configured with the given parameters. It uses a `Hasher` based on
     /// `std::collections::hash_map::DefaultHasher` and initially contains the `VirtualNode`s of
     /// the given `nodes`.
@@ -301,7 +342,11 @@ impl<N: Node + ?Sized> HashRing<N, DefaultStdHasher> {
     }
 }
 
-impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
+impl<N, H> HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     /// Creates a new `HashRing`, properly initialized based on the given parameters, including the
     /// given `Hasher`. TODO
     pub fn with_hasher_and_nodes(
@@ -500,11 +545,12 @@ impl<N: Node + ?Sized, H: Hasher> HashRing<N, H> {
     }
 }
 
-//unsafe impl<N: Node + ?Sized, H: Hasher> Send for HashRing<N, H> {}
-//unsafe impl<N: Node + ?Sized, H: Hasher> Sync for HashRing<N, H> {} // FIXME
-
-impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRing<N, H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<N, H> Display for HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
@@ -524,14 +570,22 @@ impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRing<N, H> {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-struct HashRingState<N: Node + ?Sized, H: Hasher> {
+struct HashRingState<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     hasher: H,
     vnodes_per_node: Vnid,
     replication_factor: u8,
     vnodes: Vec<VirtualNode<N>>,
 }
 
-impl<N: Node + ?Sized, H: Hasher> Clone for HashRingState<N, H> {
+impl<N, H> Clone for HashRingState<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     fn clone(&self) -> Self {
         Self {
             hasher: H::default(),
@@ -542,7 +596,11 @@ impl<N: Node + ?Sized, H: Hasher> Clone for HashRingState<N, H> {
     }
 }
 
-impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
+impl<N, H> HashRingState<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
     #[inline]
     fn with_capacity(
         capacity: usize,
@@ -684,7 +742,10 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
         self.vnodes.len()
     }
 
-    fn has_virtual_node<K: Borrow<[u8]>>(&self, key: &K) -> bool {
+    fn has_virtual_node<K>(&self, key: &K) -> bool
+    where
+        K: Borrow<[u8]>,
+    {
         self.vnodes
             .binary_search_by(|vn| {
                 let name: &[u8] = &vn.name;
@@ -712,8 +773,12 @@ impl<N: Node + ?Sized, H: Hasher> HashRingState<N, H> {
     }
 }
 
-impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRingState<N, H> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<N, H> Display for HashRingState<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         writeln!(
             f,
             "HashRingState ({} nodes X {} virtual, replication factor = {}) {{",
@@ -722,7 +787,7 @@ impl<N: Node + ?Sized, H: Hasher> std::fmt::Display for HashRingState<N, H> {
             self.replication_factor
         )?;
         for (i, vn) in self.vnodes.iter().enumerate() {
-            writeln!(f, "\t- ({:0>6})\t{}", i, vn)?
+            writeln!(f, "\t- ({:0>6}) {}", i, vn)?
         }
         writeln!(f, "}}")
     }
