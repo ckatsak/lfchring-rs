@@ -836,7 +836,7 @@ mod tests {
         eprintln!("vn1 = {:?},\nvn2 = {:?},\nvn3 = {:?}", vn1, vn2, vn3);
     }
 
-    impl Node for &str {
+    impl Node for str {
         fn hashring_node_id(&self) -> Cow<[u8]> {
             Cow::Borrowed(self.as_bytes())
         }
@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn node_str() {
         let s1 = "Node1";
-        let a1 = Arc::new(s1);
+        let a1: Arc<str> = Arc::from(s1);
         let mut h = DefaultStdHasher::default();
 
         let vn1 = VirtualNode::new(&mut h, Arc::clone(&a1), 1);
@@ -860,7 +860,7 @@ mod tests {
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
-        let nodes = vec![Arc::new("Node1"), Arc::new("Node2"), Arc::new("Node3")];
+        let nodes: Vec<Arc<str>> = vec![Arc::from("Node1"), Arc::from("Node2"), Arc::from("Node3")];
         let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
 
         assert!(ring.is_ok());
@@ -877,7 +877,7 @@ mod tests {
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
-        let nodes = vec![Arc::new("Node1"), Arc::new("Node1"), Arc::new("Node1")];
+        let nodes: Vec<Arc<str>> = vec![Arc::from("Node1"), Arc::from("Node1"), Arc::from("Node1")];
         let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes);
         eprintln!("ring = {:#?}", ring);
         assert!(ring.is_err());
@@ -892,13 +892,13 @@ mod tests {
         const REPLICATION_FACTOR: u8 = 2;
         init();
 
-        let nodes = vec![Arc::new("Node1"), Arc::new("Node2"), Arc::new("Node3")];
+        let nodes: Vec<Arc<str>> = vec![Arc::from("Node1"), Arc::from("Node2"), Arc::from("Node3")];
         let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes)?;
         eprintln!("ring = {:#?}", ring);
         eprintln!("ring.len_nodes() = {:#?}", ring.len_nodes());
         eprintln!("ring.len_virtual_nodes() = {:#?}", ring.len_virtual_nodes());
 
-        ring.insert(&[Arc::new("Node11"), Arc::new("Node12")])?;
+        ring.insert(&[Arc::from("Node11"), Arc::from("Node12")])?;
         eprintln!("ring = {:#?}", ring);
         eprintln!("ring.len_nodes() = {:#?}", ring.len_nodes());
         eprintln!("ring.len_virtual_nodes() = {:#?}", ring.len_virtual_nodes());
