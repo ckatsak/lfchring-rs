@@ -45,6 +45,8 @@ pub enum HashRingError {
     VirtualNodeAbsent(String),
     #[error("Concurrent compare-and-swap modification detected")]
     ConcurrentModification,
+    #[error("HashRing is empty")]
+    EmptyRing,
 }
 
 enum Update {
@@ -522,7 +524,7 @@ where
     }
 
     // returns a clone of the `VirtualNode`
-    pub fn virtual_node_for_key<K>(&self, key: &K) -> VirtualNode<N>
+    pub fn virtual_node_for_key<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
         K: Borrow<[u8]>,
     {
@@ -533,7 +535,7 @@ where
         // Acquire/Release orderings. FIXME?
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
 
-        let vn = inner.virtual_node_for_key(key);
+        let vn = inner.virtual_node_for_key(key)?;
         let mut ret = vn.clone();
         ret.replica_owners = Some(
             vn.replica_owners
@@ -541,7 +543,7 @@ where
                 .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
                 .clone(),
         );
-        ret
+        Ok(ret)
     }
 }
 
@@ -615,6 +617,7 @@ where
             vnodes: Vec::with_capacity(capacity),
         }
     }
+
     /// First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
     /// any of them is already present in the current vnodes map to make sure no collision occurs.
     /// Finally, merge the new vnodes into the old ones.
@@ -755,10 +758,15 @@ where
     }
 
     // returns a reference to the actual `VirtualNode` in `HashRingState.vnodes`
-    fn virtual_node_for_key<K>(&self, key: &K) -> &VirtualNode<N>
+    fn virtual_node_for_key<K>(&self, key: &K) -> Result<&VirtualNode<N>>
     where
         K: Borrow<[u8]>,
     {
+        // Return an error if the ring is empty...
+        if self.vnodes.is_empty() {
+            return Err(HashRingError::EmptyRing);
+        }
+        // ...otherwise find the correct index and return the associated vnode.
         let index = self
             .vnodes
             .binary_search_by(|vn| {
@@ -769,7 +777,7 @@ where
             % self.vnodes.len();
         // SAFETY: The remainder of the above integer division is always a usize between `0` and
         //         `self.vnodes.len() - 1`, hence can be used as an index in `self.vnodes`.
-        unsafe { self.vnodes.get_unchecked(index) }
+        Ok(unsafe { self.vnodes.get_unchecked(index) })
     }
 }
 
@@ -787,7 +795,7 @@ where
             self.replication_factor
         )?;
         for (i, vn) in self.vnodes.iter().enumerate() {
-            writeln!(f, "\t- ({:0>6}) {}", i, vn)?
+            writeln!(f, "\t- ({:0>6})  {}", i, vn)?
         }
         writeln!(f, "}}")
     }
@@ -822,6 +830,7 @@ mod tests {
             Cow::Borrowed(&self.as_bytes())
         }
     }
+
     #[test]
     fn node_string() {
         let s1 = String::from("Node1");
@@ -841,6 +850,7 @@ mod tests {
             Cow::Borrowed(self.as_bytes())
         }
     }
+
     #[test]
     fn node_str() {
         let s1 = "Node1";
@@ -1044,6 +1054,12 @@ mod tests {
             );
         }
 
+        // Remove random node from empty ring
+        assert_eq!(0, ring.len_nodes());
+        if let Ok(()) = ring.remove(&[Arc::from("Node-42".to_string())]) {
+            panic!("Unexpectedly removed 'Node-42' successfully from an empty ring!");
+        }
+
         Ok(())
     }
 
@@ -1152,7 +1168,7 @@ mod tests {
             debug!("Hash Ring String Representation:\n{}", ring);
 
             for key in &keys {
-                let vn = ring.virtual_node_for_key(key);
+                let vn = ring.virtual_node_for_key(key)?;
                 eprintln!("Key {:x?} is assigned to vnode {}", key, vn);
             }
 
