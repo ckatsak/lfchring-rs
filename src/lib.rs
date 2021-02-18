@@ -54,6 +54,11 @@ enum Update {
     Remove,
 }
 
+enum Adjacency {
+    Predecessor,
+    Successor,
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -208,7 +213,7 @@ impl<N> Borrow<[u8]> for VirtualNode<N>
 where
     N: Node + ?Sized,
 {
-    #[inline]
+    #[inline(always)]
     fn borrow(&self) -> &[u8] {
         &self.name[..]
     }
@@ -218,7 +223,7 @@ impl<N> AsRef<[u8]> for VirtualNode<N>
 where
     N: Node + ?Sized,
 {
-    #[inline]
+    #[inline(always)]
     fn as_ref(&self) -> &[u8] {
         &self.name[..]
     }
@@ -564,6 +569,44 @@ where
             .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
             .clone())
     }
+
+    fn adjacent<K>(&self, adjacency: Adjacency, key: &K) -> Result<VirtualNode<N>>
+    where
+        K: Borrow<[u8]>,
+    {
+        let guard = epoch::pin();
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+
+        let vn = inner.adjacent(adjacency, key)?;
+        let mut ret = vn.clone();
+        ret.replica_owners = Some(
+            vn.replica_owners
+                .as_ref()
+                .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
+                .clone(),
+        );
+        Ok(ret)
+    }
+
+    #[inline]
+    pub fn predecessor<K>(&self, key: &K) -> Result<VirtualNode<N>>
+    where
+        K: Borrow<[u8]>,
+    {
+        self.adjacent(Adjacency::Predecessor, key)
+    }
+
+    #[inline]
+    pub fn successor<K>(&self, key: &K) -> Result<VirtualNode<N>>
+    where
+        K: Borrow<[u8]>,
+    {
+        self.adjacent(Adjacency::Successor, key)
+    }
 }
 
 impl<N, H> Display for HashRing<N, H>
@@ -798,6 +841,39 @@ where
         //         `self.vnodes.len() - 1`, hence can be used as an index in `self.vnodes`.
         Ok(unsafe { self.vnodes.get_unchecked(index) })
     }
+
+    fn adjacent<K>(&self, adjacency: Adjacency, key: &K) -> Result<&VirtualNode<N>>
+    where
+        K: Borrow<[u8]>,
+    {
+        // Return an error if the ring is empty...
+        if self.vnodes.is_empty() {
+            return Err(HashRingError::EmptyRing);
+        }
+        // ...otherwise find the current index...
+        let index = self
+            .vnodes
+            .binary_search_by(|vn| {
+                let name: &[u8] = &vn.name;
+                name.cmp(key.borrow())
+            })
+            .unwrap_or_else(|index| index)
+            % self.vnodes.len();
+        // ...and return the adjacent one.
+        let index = match adjacency {
+            Adjacency::Predecessor => {
+                if 0 == index {
+                    self.vnodes.len() - 1
+                } else {
+                    index - 1
+                }
+            }
+            Adjacency::Successor => (index + 1) % self.vnodes.len(),
+        };
+        // SAFETY: The value of the index always stays within the range `0` to
+        //         `self.vnodes.len() - 1`, hence can be used as an index in `self.vnodes`.
+        Ok(unsafe { self.vnodes.get_unchecked(index as usize) })
+    }
 }
 
 impl<N, H> Display for HashRingState<N, H>
@@ -837,7 +913,7 @@ mod tests {
     use std::time::Duration;
 
     use hex_literal::hex;
-    use log::{debug, error, trace, warn};
+    use log::{debug, error, warn};
     use rand::prelude::*;
 
     fn init() {
@@ -1213,11 +1289,6 @@ mod tests {
             let n = Arc::new(format!("Node-{}", node_id));
             ring.insert(&[n])?;
         }
-        assert_eq!(ring.len_nodes(), NUM_NODES);
-        assert_eq!(
-            ring.len_virtual_nodes(),
-            NUM_NODES * VNODES_PER_NODE as usize
-        );
 
         // Keys selected as `VirtualNode.name + 1`
         let keys = vec![
@@ -1241,6 +1312,83 @@ mod tests {
                 ring.nodes_for_key(&key)?
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_adjacent_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+
+        // Keys selected as `VirtualNode.name + 1`
+        let keys = vec![
+            hex!("232a8a941ee901c1"),
+            hex!("324317a375aa4201"),
+            hex!("4ff59699a3bacc04"),
+            hex!("62338d102fd1edce"),
+            hex!("6aad47fd1f3fc789"),
+            hex!("728254115d9da0a8"),
+            hex!("7cf6c43df9ff4b72"),
+            hex!("a416af15b94f0122"),
+            hex!("ab1c5045e605c275"),
+            hex!("acec6c33d08ac530"),
+            hex!("cbdaa742e68b020d"),
+            hex!("ed59d86868c13210"),
+        ];
+
+        // Test for the first node
+        let key = keys.first().unwrap();
+        let vn = ring.virtual_node_for_key(key)?;
+
+        let prev_key = keys.last().unwrap();
+        let prev_vn = ring.virtual_node_for_key(prev_key)?;
+        let pred = ring.predecessor(key)?;
+        assert_eq!(pred, prev_vn);
+
+        let next_key = keys.get(1).unwrap();
+        let next_vn = ring.virtual_node_for_key(next_key)?;
+        let succ = ring.successor(key)?;
+        assert_eq!(succ, next_vn);
+
+        // Test for all the intermediate nodes
+        for i in 1..keys.len() - 1 {
+            let key = keys.get(i).unwrap();
+            let vn = ring.virtual_node_for_key(key)?;
+
+            let prev_key = keys.get(i - 1).unwrap();
+            let prev_vn = ring.virtual_node_for_key(prev_key)?;
+            let pred = ring.predecessor(key)?;
+            assert_eq!(pred, prev_vn);
+
+            let next_key = keys.get(i + 1).unwrap();
+            let next_vn = ring.virtual_node_for_key(next_key)?;
+            let succ = ring.successor(key)?;
+            assert_eq!(succ, next_vn);
+        }
+
+        // Test for the last node
+        let key = keys.last().unwrap();
+        let vn = ring.virtual_node_for_key(key)?;
+
+        let prev_key = keys.get(keys.len() - 2).unwrap();
+        let prev_vn = ring.virtual_node_for_key(prev_key)?;
+        let pred = ring.predecessor(key)?;
+        assert_eq!(pred, prev_vn);
+
+        let next_key = keys.first().unwrap();
+        let next_vn = ring.virtual_node_for_key(next_key)?;
+        let succ = ring.successor(key)?;
 
         Ok(())
     }
