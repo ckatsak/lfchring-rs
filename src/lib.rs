@@ -545,6 +545,25 @@ where
         );
         Ok(ret)
     }
+
+    pub fn nodes_for_key<K>(&self, key: &K) -> Result<Vec<Arc<N>>>
+    where
+        K: Borrow<[u8]>,
+    {
+        let guard = epoch::pin();
+        let inner = self.inner.load(Ordering::Acquire, &guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` setting it, and is never set to null. Furthermore, it always uses
+        // Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+
+        let vn = inner.virtual_node_for_key(key)?;
+        Ok(vn
+            .replica_owners
+            .as_ref()
+            .expect("Inconsistent access to VirtualNode detected! Please file a bug report.")
+            .clone())
+    }
 }
 
 impl<N, H> Display for HashRing<N, H>
@@ -1175,6 +1194,52 @@ mod tests {
             // Remove one node
             let n = Arc::new(format!("Node-{}", node_id));
             ring.remove(&[n])?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nodes_for_key_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        assert_eq!(ring.len_nodes(), NUM_NODES);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            NUM_NODES * VNODES_PER_NODE as usize
+        );
+
+        // Keys selected as `VirtualNode.name + 1`
+        let keys = vec![
+            hex!("232a8a941ee901c1"),
+            hex!("324317a375aa4201"),
+            hex!("4ff59699a3bacc04"),
+            hex!("62338d102fd1edce"),
+            hex!("6aad47fd1f3fc789"),
+            hex!("728254115d9da0a8"),
+            hex!("7cf6c43df9ff4b72"),
+            hex!("a416af15b94f0122"),
+            hex!("ab1c5045e605c275"),
+            hex!("acec6c33d08ac530"),
+            hex!("cbdaa742e68b020d"),
+            hex!("ed59d86868c13210"),
+        ];
+
+        for key in keys {
+            assert_eq!(
+                ring.virtual_node_for_key(&key)?.replica_owners(),
+                ring.nodes_for_key(&key)?
+            );
         }
 
         Ok(())
