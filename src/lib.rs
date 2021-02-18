@@ -39,10 +39,10 @@ pub type Result<T> = std::result::Result<T, HashRingError>;
 pub enum HashRingError {
     #[error("Invalid configuration: replication factor of {0} and {1} virtual nodes per node")]
     InvalidConfiguration(u8, Vnid),
-    #[error("Virtual node {0:?} is already in the ring")]
-    VirtualNodeAlreadyPresent(String),
-    #[error("Virtual node {0:?} is not in the ring")]
-    VirtualNodeAbsent(String),
+    #[error("Hash collision; Virtual node {0:?} may already exist in the ring")]
+    VirtualNodeAlreadyExists(String),
+    #[error("Virtual node {0:?} does not exist in the ring")]
+    VirtualNodeDoesNotExist(String),
     #[error("Concurrent compare-and-swap modification detected")]
     ConcurrentModification,
     #[error("HashRing is empty")]
@@ -652,7 +652,7 @@ where
                 // it is present among the vnodes we are about to extend the ring by.
                 if self.vnodes.binary_search(&vn).is_ok() || !new.insert(vn.clone()) {
                     // FIXME: How to avoid cloning the VirtualNode ^ but also be able to use it in:
-                    return Err(HashRingError::VirtualNodeAlreadyPresent(format!("{}", vn)));
+                    return Err(HashRingError::VirtualNodeAlreadyExists(format!("{}", vn)));
                 }
                 trace!("vnode '{}' has been included in the ring extension", vn);
             }
@@ -683,7 +683,7 @@ where
                     trace!("Removing vnode '{:x?}' at index {}.", vn, index);
                     removed_indices.insert(index);
                 } else {
-                    return Err(HashRingError::VirtualNodeAbsent(format!("{:x?}", vn)));
+                    return Err(HashRingError::VirtualNodeDoesNotExist(format!("{:x?}", vn)));
                 }
             }
         }
