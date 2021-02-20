@@ -1068,9 +1068,8 @@ mod tests {
     use std::time::Duration;
 
     use hex_literal::hex;
-    use log::{debug, error, warn};
+    use log::{debug, error, trace, warn};
     use rand::prelude::*;
-    use std::iter::Peekable;
 
     fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -1632,6 +1631,83 @@ mod tests {
         for vn in ring.iter(guard) {
             eprintln!("vn = {}", vn);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_iter_multithr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        debug!("ring: {}", ring);
+
+        let ring = Arc::new(ring);
+        let r1 = Arc::clone(&ring);
+        let r2 = Arc::clone(&ring);
+
+        let t1 = thread::spawn(move || {
+            trace!("START: r1.len_virtual_nodes() = {}", r1.len_virtual_nodes());
+            thread::sleep(Duration::from_millis(100));
+            const TOTAL_NODES: usize = 20;
+            for node_id in NUM_NODES..TOTAL_NODES {
+                // produce a new node & attempt to insert it
+                let n = Arc::new(format!("Node-{}", node_id));
+                //trace!("adding {:?}...", n);
+                if let Err(err) = r1.insert(&[n]) {
+                    match err {
+                        HashRingError::ConcurrentModification => {
+                            warn!("{:?}", err);
+                        }
+                        _ => {
+                            error!("{:?}", err);
+                        }
+                    };
+                };
+            }
+            trace!("END: r1.len_virtual_nodes() = {}", r1.len_virtual_nodes());
+        });
+        let t2 = thread::spawn(move || {
+            debug!("START: r2.len_vnodes() = {}", r2.len_virtual_nodes());
+
+            // Create the iterator before the other thread starts inserting nodes...
+            let guard = &epoch::pin();
+            let hashring_iter = r2.iter(guard).enumerate();
+
+            // ...and sleep for a sec...
+            thread::sleep(Duration::from_millis(1000));
+
+            // ...then go through the previously constructed iterator...
+            let mut count = 0;
+            for (i, vn) in hashring_iter {
+                debug!("ITERATION {}: {}", i, vn);
+                count += 1;
+            }
+
+            // and assert that we did NOT iterate more than the initially constructed ring's size.
+            assert_eq!(count, NUM_NODES * VNODES_PER_NODE as usize);
+
+            // NOTE: `r2` still points to the ring which is being updated, so the number of virtual
+            // nodes reported below should reflect the changes made through `r1`, but the iterator
+            // has been working with a snapshot of the ring before `t1`'s updates occur.
+            trace!("END: r2.len_virtual_nodes() = {}", r2.len_virtual_nodes());
+            trace!("END: r2 = {}", r2);
+        });
+
+        // wait for the threads to finish
+        t1.join().unwrap();
+        t2.join().unwrap();
+        //trace!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
+        //trace!("ring = {}", ring);
 
         Ok(())
     }
