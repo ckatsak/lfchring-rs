@@ -1053,6 +1053,12 @@ where
             None
         }
     }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rem = self.back - self.front;
+        (rem, Some(rem))
+    }
 }
 
 impl<'g, N, H> DoubleEndedIterator for Iter<'g, N, H>
@@ -1072,6 +1078,17 @@ where
         } else {
             None
         }
+    }
+}
+
+impl<'g, N, H> ExactSizeIterator for Iter<'g, N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    #[inline]
+    fn len(&self) -> usize {
+        self.back - self.front
     }
 }
 
@@ -1739,6 +1756,7 @@ mod tests {
         Ok(())
     }
 
+    /// Test DoubleEndedIterator
     #[test]
     fn test_iter_singlethr_02() -> Result<()> {
         const VNODES_PER_NODE: Vnid = 3;
@@ -1783,6 +1801,7 @@ mod tests {
         Ok(())
     }
 
+    /// Test DoubleEndedIterator
     #[test]
     fn test_iter_singlethr_03() -> Result<()> {
         const VNODES_PER_NODE: Vnid = 3;
@@ -1830,6 +1849,57 @@ mod tests {
             times += 1;
         }
         assert_eq!(times, NUM_NODES * VNODES_PER_NODE as usize);
+
+        Ok(())
+    }
+
+    /// Test size_hint() and ExactSizeIterator
+    #[test]
+    fn test_iter_singlethr_04() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        trace!("ring: {}", ring);
+
+        let guard = &epoch::pin();
+
+        assert_eq!(ring.iter(guard).count(), ring.iter(guard).len());
+
+        let iter = ring.iter(guard);
+        trace!("iter.size_hint() = {:?}", iter.size_hint());
+        assert_eq!(
+            iter.size_hint(),
+            (
+                NUM_NODES * VNODES_PER_NODE as usize,
+                Some(NUM_NODES * VNODES_PER_NODE as usize)
+            )
+        );
+
+        let iter = iter.filter(|&vn| vn.name.last() == Some(&42));
+        trace!("iter.size_hint() = {:?}", iter.size_hint());
+        assert_eq!(
+            iter.size_hint(),
+            (0, Some(NUM_NODES * VNODES_PER_NODE as usize))
+        );
+
+        let iter = iter.chain(ring.iter(guard));
+        trace!("iter.size_hint() = {:?}", iter.size_hint());
+        assert_eq!(
+            iter.size_hint(),
+            (
+                NUM_NODES * VNODES_PER_NODE as usize,
+                Some(2 * NUM_NODES * VNODES_PER_NODE as usize)
+            )
+        );
 
         Ok(())
     }
