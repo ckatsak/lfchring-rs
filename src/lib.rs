@@ -1004,43 +1004,55 @@ where
 //
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-impl<'g, N, H> IntoIterator for &'g HashRing<N, H>
+impl<N, H> HashRing<N, H>
 where
     N: Node + ?Sized,
     H: Hasher,
 {
-    type Item = &'g VirtualNode<N>;
-    type IntoIter = HashRingIter<'g, N>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let guard = epoch::pin();
-        //let inner = self.inner.load(Ordering::Acquire, &guard);
-        //// SAFETY: `self.inner` is not null because after its initialization, it is always
-        //// `insert()` setting it, and is never set to null. Furthermore, it always uses
-        //// Acquire/Release orderings. FIXME?
-        //let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+    fn iter<'g>(&self, guard: &'g Guard) -> HashRingIter<'g, N, H> {
+        let inner = self.inner.load(Ordering::Acquire, guard);
         HashRingIter {
-            guard,
-            //inner,
+            inner,
             curr: 0,
-            phantom: PhantomData,
+            //phantom: PhantomData,
         }
     }
 }
 
-pub struct HashRingIter<'g, N>
+//impl<'g, N, H> IntoIterator for &'g HashRing<N, H>
+//where
+//    N: Node + ?Sized,
+//    H: Hasher,
+//{
+//    type Item = &'g VirtualNode<N>;
+//    type IntoIter = HashRingIter<'g, N, H>;
+//
+//    fn into_iter(self) -> Self::IntoIter {
+//        let guard = epoch::pin();
+//        let inner = self.inner.load(Ordering::Acquire, &guard);
+//        HashRingIter {
+//            guard,
+//            inner,
+//            curr: 0,
+//            phantom: PhantomData,
+//        }
+//    }
+//}
+
+pub struct HashRingIter<'g, N, H>
 where
     N: Node + ?Sized,
+    H: Hasher,
 {
-    guard: Guard,
-    //inner: Shared<'g, HashRingState<N, H>>,
+    inner: Shared<'g, HashRingState<N, H>>,
     curr: usize,
-    phantom: PhantomData<&'g N>,
+    //phantom: PhantomData<&'g N>,
 }
 
-impl<'g, N: 'g> Iterator for HashRingIter<'g, N>
+impl<'g, N: 'g, H> Iterator for HashRingIter<'g, N, H>
 where
     N: Node + ?Sized,
+    H: Hasher,
 {
     type Item = &'g VirtualNode<N>;
 
@@ -1616,6 +1628,29 @@ mod tests {
             trace!("pred_vn = {}", pred_vn);
 
             assert_eq!(pred_vn.replica_owners()[1], vn.node);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_iter_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+
+        let guard = &epoch::pin();
+        for vn in ring.iter(guard) {
+            eprintln!("vn = {}", vn);
         }
 
         Ok(())
