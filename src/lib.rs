@@ -1010,8 +1010,16 @@ where
 {
     #[inline]
     fn iter<'g>(&self, guard: &'g Guard) -> Iter<'g, N, H> {
-        let inner = self.inner.load(Ordering::Acquire, guard);
-        Iter { inner, curr: 0 }
+        let inner_ptr = self.inner.load(Ordering::Acquire, guard);
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
+        // uses Acquire/Release orderings. FIXME?
+        let inner = unsafe { inner_ptr.as_ref() }.expect("Iter's inner HashRingState is null!");
+        Iter {
+            inner_ptr,
+            front: 0,
+            back: inner.len_virtual_nodes(),
+        }
     }
 }
 
@@ -1020,8 +1028,9 @@ where
     N: Node + ?Sized,
     H: Hasher,
 {
-    inner: Shared<'g, HashRingState<N, H>>,
-    curr: usize,
+    inner_ptr: Shared<'g, HashRingState<N, H>>,
+    front: usize,
+    back: usize,
 }
 
 impl<'g, N, H> Iterator for Iter<'g, N, H>
@@ -1032,12 +1041,37 @@ where
     type Item = &'g VirtualNode<N>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
-        // uses Acquire/Release orderings. FIXME?
-        let inner = unsafe { self.inner.as_ref() }.expect("Iter's inner HashRingState is null!");
-        self.curr += 1;
-        inner.vnodes.get(self.curr - 1)
+        if self.front < self.back {
+            // SAFETY: `self.inner` is not null because after its initialization, it is always
+            // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
+            // uses Acquire/Release orderings. FIXME?
+            let inner =
+                unsafe { self.inner_ptr.as_ref() }.expect("Iter's inner HashRingState is null!");
+            self.front += 1;
+            inner.vnodes.get(self.front - 1)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'g, N, H> DoubleEndedIterator for Iter<'g, N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.front < self.back {
+            // SAFETY: `self.inner` is not null because after its initialization, it is always
+            // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
+            // uses Acquire/Release orderings. FIXME?
+            let inner =
+                unsafe { self.inner_ptr.as_ref() }.expect("Iter's inner HashRingState is null!");
+            self.back -= 1;
+            inner.vnodes.get(self.back)
+        } else {
+            None
+        }
     }
 }
 
@@ -1053,7 +1087,7 @@ where
 mod tests {
     use super::*;
 
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::thread;
     use std::time::Duration;
 
@@ -1701,6 +1735,101 @@ mod tests {
         t2.join().unwrap();
         //trace!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
         //trace!("ring = {}", ring);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_iter_singlethr_02() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        debug!("ring: {}", ring);
+
+        let guard = &epoch::pin();
+
+        // Use `std::iter::Iterator::rev()` to place all vnodes in a Vec in reverse order...
+        let mut vns = Vec::with_capacity(NUM_NODES * VNODES_PER_NODE as usize);
+        for vn in ring.iter(guard).rev() {
+            trace!("vn = {}", vn);
+            trace!("vn.name = {:x?}", vn.name);
+            trace!("vn.node = {}", vn.node);
+            trace!("vn.replica_owners = {:?}", vn.replica_owners());
+            vns.push(vn);
+        }
+        // ...then verify the result by comparing the Vec to the normal Iterator.
+        for (i, vn) in ring.iter(guard).enumerate() {
+            trace!(
+                "comparing vn-{} to vns[{}]",
+                i,
+                NUM_NODES * VNODES_PER_NODE as usize - i - 1
+            );
+            assert_eq!(
+                &vn,
+                vns.get(NUM_NODES * VNODES_PER_NODE as usize - i - 1)
+                    .expect("OOPS")
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_iter_singlethr_03() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 3;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // Insert the nodes
+        const NUM_NODES: usize = 4;
+        for node_id in 0..NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+        trace!("ring: {}", ring);
+
+        let guard = &epoch::pin();
+
+        // First create a mapping between each vnode and its index
+        let mut m = HashMap::with_capacity(NUM_NODES * VNODES_PER_NODE as usize);
+        for (i, vn) in ring.iter(guard).enumerate() {
+            m.insert(vn, i);
+        }
+
+        // Construct the iterator before adding extra nodes...
+        let mut iter = ring.iter(guard);
+
+        // Add some extra nodes, which we do not expect to go through later
+        for node_id in 100..100 + NUM_NODES {
+            let n = Arc::new(format!("Node-{}", node_id));
+            ring.insert(&[n])?;
+        }
+
+        // Now alternate between the forward and the backward iterator
+        let mut times = 0;
+        let mut front = true;
+        loop {
+            let vn = if front { iter.next() } else { iter.next_back() };
+            if let Some(vn) = vn {
+                trace!("(vnode {:2}) : {}", m.get(vn).unwrap(), vn);
+            } else {
+                break;
+            }
+            front = !front;
+            times += 1;
+        }
+        assert_eq!(times, NUM_NODES * VNODES_PER_NODE as usize);
 
         Ok(())
     }
