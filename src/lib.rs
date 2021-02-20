@@ -12,7 +12,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
-use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -1009,6 +1008,7 @@ where
     N: Node + ?Sized,
     H: Hasher,
 {
+    #[inline]
     fn iter<'g>(&self, guard: &'g Guard) -> Iter<'g, N, H> {
         let inner = self.inner.load(Ordering::Acquire, guard);
         Iter { inner, curr: 0 }
@@ -1032,8 +1032,12 @@ where
     type Item = &'g VirtualNode<N>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO
-        None
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
+        // uses Acquire/Release orderings. FIXME?
+        let inner = unsafe { self.inner.as_ref() }.expect("Iter's inner HashRingState is null!");
+        self.curr += 1;
+        inner.vnodes.get(self.curr - 1)
     }
 }
 
@@ -1622,6 +1626,7 @@ mod tests {
             let n = Arc::new(format!("Node-{}", node_id));
             ring.insert(&[n])?;
         }
+        debug!("ring: {}", ring);
 
         let guard = &epoch::pin();
         for vn in ring.iter(guard) {
