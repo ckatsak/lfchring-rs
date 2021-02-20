@@ -1009,47 +1009,22 @@ where
     N: Node + ?Sized,
     H: Hasher,
 {
-    fn iter<'g>(&self, guard: &'g Guard) -> HashRingIter<'g, N, H> {
+    fn iter<'g>(&self, guard: &'g Guard) -> Iter<'g, N, H> {
         let inner = self.inner.load(Ordering::Acquire, guard);
-        HashRingIter {
-            inner,
-            curr: 0,
-            //phantom: PhantomData,
-        }
+        Iter { inner, curr: 0 }
     }
 }
 
-//impl<'g, N, H> IntoIterator for &'g HashRing<N, H>
-//where
-//    N: Node + ?Sized,
-//    H: Hasher,
-//{
-//    type Item = &'g VirtualNode<N>;
-//    type IntoIter = HashRingIter<'g, N, H>;
-//
-//    fn into_iter(self) -> Self::IntoIter {
-//        let guard = epoch::pin();
-//        let inner = self.inner.load(Ordering::Acquire, &guard);
-//        HashRingIter {
-//            guard,
-//            inner,
-//            curr: 0,
-//            phantom: PhantomData,
-//        }
-//    }
-//}
-
-pub struct HashRingIter<'g, N, H>
+pub struct Iter<'g, N, H>
 where
     N: Node + ?Sized,
     H: Hasher,
 {
     inner: Shared<'g, HashRingState<N, H>>,
     curr: usize,
-    //phantom: PhantomData<&'g N>,
 }
 
-impl<'g, N: 'g, H> Iterator for HashRingIter<'g, N, H>
+impl<'g, N, H> Iterator for Iter<'g, N, H>
 where
     N: Node + ?Sized,
     H: Hasher,
@@ -1062,7 +1037,7 @@ where
     }
 }
 
-//impl<'g, N, H> HashRingIter<'g, N, H>
+//impl<'g, N, H> Iter<'g, N, H>
 //where
 //    N: Node + ?Sized,
 //    H: Hasher,
