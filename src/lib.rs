@@ -12,6 +12,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
+use std::iter::FusedIterator;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -1092,6 +1093,8 @@ where
     }
 }
 
+impl<'g, N: Node + ?Sized, H: Hasher> FusedIterator for Iter<'g, N, H> {}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
 //
@@ -1872,8 +1875,10 @@ mod tests {
 
         let guard = &epoch::pin();
 
+        // ExactSizeIterator::len()
         assert_eq!(ring.iter(guard).count(), ring.iter(guard).len());
 
+        // Iterator::size_hint()
         let iter = ring.iter(guard);
         trace!("iter.size_hint() = {:?}", iter.size_hint());
         assert_eq!(
@@ -1900,6 +1905,17 @@ mod tests {
                 Some(2 * NUM_NODES * VNODES_PER_NODE as usize)
             )
         );
+
+        // FusedIterator
+        const ITERS: usize = 1000;
+        let mut iter = ring.iter(guard);
+        for _ in iter.by_ref() {}
+        let mut nonez = Vec::with_capacity(ITERS);
+        for _ in 0..ITERS {
+            nonez.push(iter.next());
+        }
+        assert!(nonez.iter().all(|none| none.is_none()));
+        trace!("all {} entries are None!", nonez.len());
 
         Ok(())
     }
