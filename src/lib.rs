@@ -12,11 +12,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
+use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crossbeam_epoch::{self as epoch, Atomic, Owned};
+use crossbeam_epoch::{self as epoch, Atomic, Guard, Owned, Shared};
 use log::trace;
 use thiserror::Error;
 
@@ -994,6 +995,70 @@ where
         writeln!(f, "}}")
     }
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//
+// Iterator
+//
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+impl<'g, N, H> IntoIterator for &'g HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    type Item = &'g VirtualNode<N>;
+    type IntoIter = HashRingIter<'g, N>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let guard = epoch::pin();
+        //let inner = self.inner.load(Ordering::Acquire, &guard);
+        //// SAFETY: `self.inner` is not null because after its initialization, it is always
+        //// `insert()` setting it, and is never set to null. Furthermore, it always uses
+        //// Acquire/Release orderings. FIXME?
+        //let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
+        HashRingIter {
+            guard,
+            //inner,
+            curr: 0,
+            phantom: PhantomData,
+        }
+    }
+}
+
+pub struct HashRingIter<'g, N>
+where
+    N: Node + ?Sized,
+{
+    guard: Guard,
+    //inner: Shared<'g, HashRingState<N, H>>,
+    curr: usize,
+    phantom: PhantomData<&'g N>,
+}
+
+impl<'g, N: 'g> Iterator for HashRingIter<'g, N>
+where
+    N: Node + ?Sized,
+{
+    type Item = &'g VirtualNode<N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // TODO
+        None
+    }
+}
+
+//impl<'g, N, H> HashRingIter<'g, N, H>
+//where
+//    N: Node + ?Sized,
+//    H: Hasher,
+//{
+//    pub fn new() -> Self {
+//        // TODO
+//    }
+//}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //
