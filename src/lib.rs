@@ -648,6 +648,45 @@ where
     }
 }
 
+impl<N, H> Extend<Arc<N>> for HashRing<N, H>
+where
+    N: Node + ?Sized,
+    H: Hasher,
+{
+    /// TODO: Documentation?
+    ///
+    /// Extend the `HashRing` by the `Node`s provided through the `Iterator` over `Arc<N>>`.
+    ///
+    /// Note that, due to the restriction of `Extend::extend()` method's signature, a `&mut
+    /// HashRing` is required.
+    /// The preferred way to extend the ring is via `HashRing::insert()` anyway; read the section
+    /// below for further details.
+    ///
+    /// # Panics
+    ///
+    /// Although the `Extend` trait is implemented for `HashRing`, it is not the preferred way to
+    /// extend it.
+    /// The signature of `Extend::extend()` does not allow to return an `Err` if the extension
+    /// fails.
+    /// Therefore, in case of hash collision (e.g., when inserting an already existing `Node` in
+    /// the `HashRing`) this method fails by panicking (although the ring remains in a consistent
+    /// state, since updating the ring is considered an atomic operation).
+    ///
+    /// The preferred way to add nodes to the `HashRing` is via `HashRing::insert()` instead, which
+    /// returns an `Err` that can be handled in case of a failure.
+    /// Only use this method if you know for sure that hash collisions are extremely unlikely and
+    /// practically impossible (e.g., when employing a cryptographically secure hash function).
+    fn extend<I: IntoIterator<Item = Arc<N>>>(&mut self, iter: I) {
+        for node in iter {
+            if let Err(err) = self.update(Update::Insert, &[Arc::clone(&node)]) {
+                panic!("Error inserting new nodes to the ring: {}", err);
+            }
+        }
+        //let nodes = iter.into_iter().cloned();
+        //self.update(Update::Insert, nodes);
+    }
+}
+
 impl<N, H> Display for HashRing<N, H>
 where
     N: Node + ?Sized,
@@ -1108,6 +1147,7 @@ mod tests {
     use super::*;
 
     use std::collections::{HashMap, HashSet};
+    use std::panic;
     use std::thread;
     use std::time::Duration;
 
@@ -1916,6 +1956,40 @@ mod tests {
         }
         assert!(nonez.iter().all(|none| none.is_none()));
         trace!("all {} entries are None!", nonez.len());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extend_singlethr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 4;
+        const REPLICATION_FACTOR: u8 = 2;
+        init();
+
+        // Initialize a ring with 3 nodes
+        let nodes: Vec<Arc<str>> = vec![Arc::from("Node1"), Arc::from("Node2"), Arc::from("Node3")];
+        let mut ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &nodes)?;
+        trace!("ring = {}", ring);
+        assert_eq!(ring.len_nodes(), nodes.len());
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            nodes.len() * VNODES_PER_NODE as usize
+        );
+
+        // Extend the ring by 2 nodes
+        ring.extend(vec![Arc::from("Node11"), Arc::from("Node12")]);
+        trace!("ring = {}", ring);
+        assert_eq!(ring.len_nodes(), nodes.len() + 2);
+        assert_eq!(
+            ring.len_virtual_nodes(),
+            (nodes.len() + 2) * VNODES_PER_NODE as usize
+        );
+
+        // Attempt to extend it by the same 2 nodes, and catch it panicking
+        let res = std::panic::catch_unwind(move || {
+            ring.extend(vec![Arc::from("Node11"), Arc::from("Node12")])
+        });
+        assert!(res.is_err());
 
         Ok(())
     }
