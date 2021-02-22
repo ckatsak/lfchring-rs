@@ -5,6 +5,7 @@
 //! a chance to single-threaded contexts to opt out of it.
 
 //#![deny(missing_docs)]
+//#![deny(missing_doc_code_examples)]
 #![allow(dead_code, unused_variables, unused_imports)]
 
 use std::borrow::{Borrow, Cow};
@@ -775,7 +776,7 @@ where
                     // FIXME: How to avoid cloning the VirtualNode ^ but also be able to use it in:
                     return Err(HashRingError::VirtualNodeAlreadyExists(format!("{}", vn)));
                 }
-                trace!("vnode '{}' has been included in the ring extension", vn);
+                //trace!("vnode '{}' has been included in the ring extension", vn);
             }
         }
         // TODO: What happens with the reallocation here? It is completely uncontrolled for now.
@@ -801,7 +802,7 @@ where
                 name.extend(&vnid.to_ne_bytes());
                 let vn = self.hasher.digest(&name);
                 if let Ok(index) = self.vnodes.binary_search_by(|e| e.name.cmp(&vn)) {
-                    trace!("Removing vnode '{:x?}' at index {}.", vn, index);
+                    //trace!("Removing vnode '{:x?}' at index {}.", vn, index);
                     removed_indices.insert(index);
                 } else {
                     return Err(HashRingError::VirtualNodeDoesNotExist(format!("{:x?}", vn)));
@@ -1990,6 +1991,174 @@ mod tests {
             ring.extend(vec![Arc::from("Node11"), Arc::from("Node12")])
         });
         assert!(res.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_contention_multithr_01() -> Result<()> {
+        const VNODES_PER_NODE: Vnid = 4;
+        const REPLICATION_FACTOR: u8 = 3;
+        init();
+
+        let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+
+        // NOTE: Setting these to 100x20 is painfully slow...
+        // Number of iterations per thread
+        const ITERS: usize = 50;
+        // Number of threads
+        const NUM_THREADS: usize = 10;
+
+        // Closure to insert/remove a chunk of distinct nodes to/from the ring.
+        let chunk_operation =
+            |op: Update, tid: usize, ring: Arc<HashRing<String, DefaultStdHasher>>| {
+                let mut completed_nodes = HashSet::new();
+                for node_id in tid * ITERS..(tid + 1) * ITERS {
+                    // produce a new node...
+                    let n = Arc::new(format!("Node-{}", node_id));
+                    trace!("[{}] adding {:?}...", tid, n);
+                    // ...and insist inserting/removing it until we succeed.
+                    while let Err(err) = match op {
+                        Update::Insert => ring.insert(&[Arc::clone(&n)]),
+                        Update::Remove => ring.remove(&[Arc::clone(&n)]),
+                    } {
+                        match err {
+                            HashRingError::ConcurrentModification => {
+                                trace!("[{}] failed on Node-{}: {:?}", tid, node_id, err);
+                            }
+                            _ => {
+                                warn!("[{}] failed on Node-{}: {:?}", tid, node_id, err);
+                            }
+                        }
+                    }
+                    trace!("[{}] progressed on Node-{}", tid, node_id);
+                    let _ = completed_nodes.insert(node_id);
+                }
+                completed_nodes
+            };
+
+        // Wrap the ring in an Arc to clone it for each thread later.
+        let ring = Arc::new(ring);
+
+        //
+        // Insert the nodes in the ring:
+        //
+        // Threads' handles
+        let mut handles = Vec::with_capacity(NUM_THREADS);
+        // Threads' outputs
+        let mut sets = Vec::with_capacity(NUM_THREADS);
+
+        for tid in 0..NUM_THREADS {
+            // Clone the ring once for each thread...
+            let r = Arc::clone(&ring);
+            // ...and spawn each one of them...
+            handles.push(thread::spawn(move || {
+                chunk_operation(Update::Insert, tid, r)
+            }));
+        }
+        // ...then wait for all of them to finish.
+        for (tid, handle) in handles.into_iter().enumerate() {
+            match handle.join() {
+                Ok(s) => {
+                    trace!("[main] thread {} was successfully joined", tid);
+                    assert_eq!(s.len(), ITERS);
+                    sets.push(s);
+                }
+                Err(err) => {
+                    error!("[main] error joining thread {}: {:?}", tid, err);
+                }
+            };
+        }
+
+        //
+        // Spawn multiple reader threads playing around concurrently
+        //
+        // Threads' handles
+        let mut handles = Vec::with_capacity(NUM_THREADS);
+        for _ in 0..NUM_THREADS {
+            let r = Arc::clone(&ring);
+            handles.push(thread::spawn(move || {
+                let guard = &epoch::pin();
+                assert_eq!(
+                    r.iter(guard).count(),
+                    NUM_THREADS * ITERS * VNODES_PER_NODE as usize
+                );
+                assert_eq!(r.iter(guard).count(), r.len_virtual_nodes(),);
+            }));
+        }
+
+        //
+        // Verify the correctness of the ring on the main thread, concurrently to the readers.
+        //
+        // Their results must be disjoint...
+        sets.iter().enumerate().for_each(|(i, si)| {
+            sets.iter().enumerate().for_each(|(j, sj)| {
+                if i == j {
+                    assert!(si.is_subset(sj) && si.is_superset(sj));
+                } else {
+                    assert!(si.is_disjoint(sj));
+                }
+            });
+        });
+        // ...so create their union...
+        let union: BTreeSet<_> = sets.iter().flatten().collect();
+        assert_eq!(union.len(), NUM_THREADS * ITERS);
+        // ...which should contain all numbers in `0..NUM_THREADS * ITERS` (i.e., the Node IDs).
+        union
+            .iter()
+            .zip(0..NUM_THREADS * ITERS)
+            .for_each(|(&&id, i)| {
+                assert_eq!(id, i);
+            });
+        trace!("[main] {} distinct nodes have been inserted", union.len());
+        trace!("[main] len_nodes() = {}", ring.len_nodes());
+        trace!("[main] len_virtual_nodes() = {}", ring.len_virtual_nodes());
+        assert_eq!(union.len(), ring.len_nodes());
+        assert_eq!(
+            union.len() * VNODES_PER_NODE as usize,
+            ring.len_virtual_nodes()
+        );
+        trace!("[main] ring = {}", ring);
+
+        // Join reader threads
+        for (tid, handle) in handles.into_iter().enumerate() {
+            if let Err(err) = handle.join() {
+                error!("[main] error joining thread {}: {:?}", tid, err);
+            }
+        }
+
+        //
+        // Now remove the nodes from the ring:
+        //
+        // Threads' handles
+        let mut handles = Vec::with_capacity(NUM_THREADS);
+        // Threads' outputs
+        let mut sets = Vec::with_capacity(NUM_THREADS);
+
+        for tid in 0..NUM_THREADS {
+            // Clone the ring once for each thread...
+            let r = Arc::clone(&ring);
+            // ...and spawn each one...
+            handles.push(thread::spawn(move || {
+                chunk_operation(Update::Remove, tid, r)
+            }));
+        }
+        // ...then wait for all of them to finish.
+        for (tid, handle) in handles.into_iter().enumerate() {
+            match handle.join() {
+                Ok(s) => {
+                    trace!("[main] thread {} was successfully joined", tid);
+                    assert_eq!(s.len(), ITERS);
+                    sets.push(s);
+                }
+                Err(err) => {
+                    error!("[main] error joining thread {}: {:?}", tid, err);
+                }
+            };
+        }
+        assert_eq!(0, ring.len_virtual_nodes());
+        assert_eq!(0, ring.len_nodes());
+        trace!("[main] ring = {}", ring);
 
         Ok(())
     }
