@@ -424,13 +424,13 @@ where
     /// Only use this method if you know for sure that hash collisions are extremely unlikely and
     /// practically impossible (e.g., when employing a cryptographically secure hash function).
     fn extend<I: IntoIterator<Item = Arc<N>>>(&mut self, iter: I) {
+        let mut nodes = vec![];
         for node in iter {
-            if let Err(err) = self.update(Update::Insert, &[Arc::clone(&node)]) {
-                panic!("Error inserting new nodes to the ring: {}", err);
-            }
+            nodes.push(Arc::clone(&node));
         }
-        //let nodes = iter.into_iter().cloned();
-        //self.update(Update::Insert, nodes);
+        if let Err(err) = self.update(Update::Insert, &nodes) {
+            panic!("Error inserting new nodes to the ring: {}", err);
+        }
     }
 }
 
