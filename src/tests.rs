@@ -1,7 +1,3 @@
-//#![deny(missing_docs)]
-//#![deny(missing_doc_code_examples)]
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use super::*;
 
 use std::borrow::Cow;
@@ -24,7 +20,7 @@ fn init() {
 }
 
 impl Node for String {
-    fn hashring_node_id(&self) -> Cow<[u8]> {
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(&self.as_bytes())
     }
 }
@@ -44,7 +40,7 @@ fn node_string() {
 }
 
 impl Node for str {
-    fn hashring_node_id(&self) -> Cow<[u8]> {
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(self.as_bytes())
     }
 }
@@ -452,7 +448,7 @@ fn test_adjacent_singlethr_01() -> Result<()> {
 
     // Test for the first node
     let key = keys.first().unwrap();
-    let vn = ring.virtual_node_for_key(key)?;
+    let _ = ring.virtual_node_for_key(key)?;
 
     let prev_key = keys.last().unwrap();
     let prev_vn = ring.virtual_node_for_key(prev_key)?;
@@ -467,7 +463,7 @@ fn test_adjacent_singlethr_01() -> Result<()> {
     // Test for all the intermediate nodes
     for i in 1..keys.len() - 1 {
         let key = keys.get(i).unwrap();
-        let vn = ring.virtual_node_for_key(key)?;
+        let _ = ring.virtual_node_for_key(key)?;
 
         let prev_key = keys.get(i - 1).unwrap();
         let prev_vn = ring.virtual_node_for_key(prev_key)?;
@@ -482,7 +478,7 @@ fn test_adjacent_singlethr_01() -> Result<()> {
 
     // Test for the last node
     let key = keys.last().unwrap();
-    let vn = ring.virtual_node_for_key(key)?;
+    let _ = ring.virtual_node_for_key(key)?;
 
     let prev_key = keys.get(keys.len() - 2).unwrap();
     let prev_vn = ring.virtual_node_for_key(prev_key)?;
@@ -492,6 +488,7 @@ fn test_adjacent_singlethr_01() -> Result<()> {
     let next_key = keys.first().unwrap();
     let next_vn = ring.virtual_node_for_key(next_key)?;
     let succ = ring.successor(key)?;
+    assert_eq!(succ, next_vn);
 
     Ok(())
 }

@@ -1,7 +1,3 @@
-//#![deny(missing_docs)]
-//#![deny(missing_doc_code_examples)]
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::borrow::Borrow;
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
@@ -11,7 +7,7 @@ use std::sync::Arc;
 use log::trace;
 
 use crate::{
-    types::{Adjacency, HashRingError, Hasher, Node, Result, Update, Vnid},
+    types::{Adjacency, HashRingError, Hasher, Node, Result, Vnid},
     vnode::VirtualNode,
 };
 

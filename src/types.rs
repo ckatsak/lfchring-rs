@@ -1,7 +1,3 @@
-//#![deny(missing_docs)]
-//#![deny(missing_doc_code_examples)]
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher as StdHasher;
@@ -15,7 +11,7 @@ pub type Result<T> = std::result::Result<T, HashRingError>;
 /// Node represents a single distinct node in the ring.
 pub trait Node {
     /// Retrieve a name that uniquely identifies the particular Node.
-    fn hashring_node_id(&self) -> Cow<[u8]>;
+    fn hashring_node_id(&self) -> Cow<'_, [u8]>;
 }
 
 // TODO: Reporting `VirtualNode`s as `String`s is probably useless. Is there any case where

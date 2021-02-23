@@ -1,7 +1,3 @@
-//#![deny(missing_docs)]
-//#![deny(missing_doc_code_examples)]
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::Ordering;

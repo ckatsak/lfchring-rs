@@ -1,10 +1,19 @@
 [package]
 name = "lfchring"
-version = "0.1.0"
+version = "0.1.0" # remember to update html_root_url
 authors = ["Christos Katsakioris <ckatsak@gmail.com>"]
+license = "Apache-2.0"
+description = """
+Concurrent, lock-free implementation of a consistent hashing ring data
+structure, supporting virtual nodes and keeping track of replication.
+"""
+repository = "https://github.com/ckatsak/lfchring-rs"
+readme = "README.md"
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+keywords = ["concurrent", "lock-free", "consistent-hash", "ring", "data-structure"]
+categories = ["data-structures", "concurrency", "algorithms"]
+
 
 [dependencies]
 crossbeam-epoch = "0.9"

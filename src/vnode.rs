@@ -1,14 +1,10 @@
-//#![deny(missing_docs)]
-//#![deny(missing_doc_code_examples)]
-#![allow(dead_code, unused_variables, unused_imports)]
-
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
 use std::mem;
 use std::sync::Arc;
 
-use crate::types::{Hasher, Node, Result, Vnid};
+use crate::types::{Hasher, Node, Vnid};
 
 /// VirtualNode represents a single virtual node in the ring.
 #[derive(Debug)]
@@ -159,7 +155,8 @@ where
         // One extra `String` allocation per replica owner.
         write!(f, "{} ({}-{}) --> (", name_hex, node, self.vnid)?;
         if self.replica_owners.is_some() {
-            for (i, owner) in self.replica_owners.as_ref().unwrap().iter().enumerate() {
+            // FIXME: Redundant enumeration, ugly output
+            for (_, owner) in self.replica_owners.as_ref().unwrap().iter().enumerate() {
                 write!(
                     f,
                     "{}, ",
