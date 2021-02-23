@@ -1,3 +1,19 @@
+// This file is part of lfchring-rs.
+//
+// Copyright 2021 Christos Katsakioris
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::iter::FusedIterator;
 
 use crossbeam_epoch::Shared;
@@ -8,6 +24,40 @@ use crate::{
     vnode::VirtualNode,
 };
 
+/// An iterator over the [`VirtualNode`]s of a [`HashRing<N, H>`].
+///
+/// This type implements the [`Iterator`] trait, as well as the [`DoubleEndedIterator`],
+/// [`ExactSizeIterator`] and [`FusedIterator`], hence also enabling traversals of the virtual
+/// nodes of the consistent hashing ring in a reversed order, acquiring the iterator's length, etc.
+///
+/// [`Iter`] is constructed through calls to [`HashRing::iter`].
+/// However, note that the [`IntoIterator`] trait is not implemented because of a deviation in the
+/// method's signature:
+///
+/// [`Iter`] is generic over the lifetime of a [`Guard`], which is required to ensure that the
+/// underlying pointer to the original data structure where the virtual nodes have been stored
+/// since the time of the creation of the iterator is not being freed by some subsequent write
+/// operation on the ring.
+/// The [`Guard`] must be created by the user of the iterator and passed to the [`Iter`] through
+/// the [`HashRing::iter`] call.
+/// For further information regarding the memory management techniques employed by this crate,
+/// please refer to the crate-level documentation, as well as the documentation of
+/// [`crossbeam_epoch`].
+//
+//  TODO: Include an example for calling [`HashRing::iter`], both here and in the documentation of
+//  [`HashRing::iter`].
+//
+///
+/// Also note that for the same reasons as above, [`Iter`] **cannot** be [`Send`] or [`Sync`], as
+/// the deallocation of the data pointed to internally by the [`Iter`] effectively awaits the
+/// thread that constructed the [`Iter`] to get un[`pin`]ned.
+///
+///
+///  [`HashRing<N, H>`]: struct.HashRing.html
+///  [`HashRing::iter`]: struct.HashRing.html#method.iter
+///  [`Guard`]: struct.Guard.html
+///  [`pin`]: fn.pin.html
+///  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
 pub struct Iter<'guard, N, H>
 where
     N: Node + ?Sized,

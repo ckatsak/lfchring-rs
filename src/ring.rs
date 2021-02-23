@@ -1,3 +1,19 @@
+// This file is part of lfchring-rs.
+//
+// Copyright 2021 Christos Katsakioris
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 use std::sync::atomic::Ordering;
@@ -13,11 +29,14 @@ use crate::{
     vnode::VirtualNode,
 };
 
-/// A lock-free consistent hashing ring entity, designed for frequent reads by multiple concurrent
-/// readers and infrequent updates by *one* _single writer_ at a time.
+/// The consistent hashing ring data structure.
 ///
-/// It features efficient support for virtual ring nodes per distinct node, as well as
-/// "automatically managed" data replication among the distinct node.
+/// Users will probably interact with this crate mostly through this type, as it is central to its
+/// API.
+///
+/// In multi-threaded contexts, it needs to be wrapped in [`Arc`].
+///
+/// To find out more general information regarding its use, refer to the crate-level documentation.
 #[derive(Debug)]
 pub struct HashRing<N, H>
 where
@@ -52,9 +71,29 @@ impl<N> HashRing<N, DefaultStdHasher>
 where
     N: Node + ?Sized,
 {
-    /// Create a new `HashRing` configured with the given parameters. It uses a `Hasher` based on
-    /// `std::collections::hash_map::DefaultHasher` and initially contains the `VirtualNode`s of
-    /// the given `nodes`.
+    /// Create a new [`HashRing<N, H>`] configured with the given parameters (i.e., the number of
+    /// *virtual nodes* per ring node and the *replication factor*) and initialize it with the
+    /// provided `Node`s (the ring will be populated by their [`VirtualNode`]s automatically).
+    ///
+    /// The new [`HashRing<N, H>`] will employ the built-in [`Hasher`] that is based on standard
+    /// library's [`DefaultHasher`][DefaultHasher].
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`HashRingError::InvalidConfiguration`] if either the number of virtual nodes per
+    /// distinct ring node or the replication factor is `0`.
+    ///
+    /// - Returns [`HashRingError::VirtualNodeAlreadyExists`] in the case that a hash collision
+    /// occurs while attempting to insert the given [`Node`]s in the new consistent hashing ring.
+    /// The reason for this can be one of the following:
+    ///   - the output of [`Node::hashring_node_id`] for two (or more) of the [`Node`]s provided
+    ///   for insertion is equal;
+    ///   - the provided [`Hasher`] produces equal hash digests for different outputs of
+    ///   [`Node::hashring_node_id`] for two (or more) [`Node`]s among those provided for
+    ///   insertion.
+    ///
+    ///
+    ///  [DefaultHasher]: https://doc.rust-lang.org/std/collections/hash_map/struct.DefaultHasher.html
     #[inline]
     pub fn with_nodes(
         vnodes_per_node: Vnid,
@@ -69,11 +108,20 @@ where
         )
     }
 
-    /// Create a new `HashRing` configured with the given parameters. It uses a `Hasher` based on
-    /// `std::collections::hash_map::DefaultHasher` and it is initially empty.
+    /// Create a new [`HashRing<N, H>`] configured with the given parameters (i.e., the number of
+    /// *virtual nodes* per ring node and the *replication factor*), which is initially empty of
+    /// `Node`s (and, of course, empty of [`VirtualNode`]s too).
     ///
-    /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
-    /// if no nodes are supplied at all?
+    /// The new [`HashRing<N, H>`] will employ the built-in [`Hasher`] that is based on standard
+    /// library's [`DefaultHasher`][DefaultHasher].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::InvalidConfiguration`] if either the number of virtual nodes per
+    /// distinct ring node or the replication factor is `0`.
+    ///
+    ///
+    ///  [DefaultHasher]: https://doc.rust-lang.org/std/collections/hash_map/struct.DefaultHasher.html
     #[inline]
     pub fn new(vnodes_per_node: Vnid, replication_factor: u8) -> Result<Self> {
         Self::with_hasher_and_nodes(
@@ -90,8 +138,26 @@ where
     N: Node + ?Sized,
     H: Hasher,
 {
-    /// Creates a new `HashRing`, properly initialized based on the given parameters, including the
-    /// given `Hasher`. TODO
+    /// Create a new [`HashRing<N, H>`] configured with the given parameters (i.e., the number of
+    /// *virtual nodes* per ring node and the *replication factor*) and initialize it with the
+    /// provided `Node`s (the ring will be populated by their [`VirtualNode`]s automatically).
+    ///
+    /// The new [`HashRing<N, H>`] will employ the provided [`Hasher`] for placing the
+    /// [`VirtualNode`]s on the consistent hashing ring.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`HashRingError::InvalidConfiguration`] if either the number of virtual nodes per
+    /// distinct ring node or the replication factor is `0`.
+    ///
+    /// - Returns [`HashRingError::VirtualNodeAlreadyExists`] in the case that a hash collision
+    /// occurs while attempting to insert the given [`Node`]s in the new consistent hashing ring.
+    /// The reason for this can be one of the following:
+    ///   - the output of [`Node::hashring_node_id`] for two (or more) of the [`Node`]s provided
+    ///   for insertion is equal;
+    ///   - the provided [`Hasher`] produces equal hash digests for different outputs of
+    ///   [`Node::hashring_node_id`] for two (or more) [`Node`]s among those provided for
+    ///   insertion.
     pub fn with_hasher_and_nodes(
         hasher: H,
         vnodes_per_node: Vnid,
@@ -112,13 +178,24 @@ where
         })
     }
 
-    /// TODO: Should we get rid of the `Result`, since `HashRingState::insert()` cannot really fail
-    /// if no nodes are supplied at all?
+    /// Create a new [`HashRing<N, H>`] configured with the given parameters (i.e., the number of
+    /// *virtual nodes* per ring node and the *replication factor*), which is initially empty of
+    /// `Node`s (and, of course, empty of [`VirtualNode`]s too).
+    ///
+    /// The new [`HashRing<N, H>`] will employ the provided [`Hasher`] for placing the
+    /// [`VirtualNode`]s on the consistent hashing ring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::InvalidConfiguration`] if either the number of virtual nodes per
+    /// distinct ring node or the replication factor is `0`.
     #[inline]
     pub fn with_hasher(hasher: H, vnodes_per_node: Vnid, replication_factor: u8) -> Result<Self> {
         Self::with_hasher_and_nodes(hasher, vnodes_per_node, replication_factor, &[])
     }
 
+    /// Returns the number of distinct ring nodes that currently populate the consistent hashing
+    /// ring.
     pub fn len_nodes(&self) -> usize {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
@@ -129,6 +206,10 @@ where
         //unsafe { inner.deref() }.len_nodes()
     }
 
+    /// Returns the number of *virtual nodes* that currently populate the consistent hashing ring.
+    ///
+    /// This should always be equal to the result of [`HashRing::len_nodes`] multiplied by the
+    /// `vnodes_per_node` for a particular [`HashRing<N, H>`].
     pub fn len_virtual_nodes(&self) -> usize {
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
@@ -241,16 +322,38 @@ where
         Ok(())
     }
 
+    /// Insert the given [`Node`]s to the consistent hashing ring, thereby expanding it.
+    ///
+    /// # Errors
+    ///
+    /// [`HashRingError::VirtualNodeAlreadyExists`] is returned in the case of a hash collision
+    /// while attempting to insert the given [`Node`]s in the consistent hashing ring.
+    /// This can happen if:
+    /// - the output of [`Node::hashring_node_id`] for one (or more) of the new [`Node`]s is equal
+    /// to that of one of the `Node`s that already exist in the ring;
+    /// - the output of [`Node::hashring_node_id`] for two (or more) of the new [`Node`]s is equal
+    /// to each other;
+    /// - the provided [`Hasher`] produces equal hash digests for different outputs of
+    /// [`Node::hashring_node_id`] for two (or more) [`Node`]s among the new or the already
+    /// existing ones.
     #[inline]
     pub fn insert(&self, nodes: &[Arc<N>]) -> Result<()> {
         self.update(Update::Insert, nodes)
     }
 
+    /// Remove the given [`Node`]s from the consistent hashing ring, thereby shrinking it.
+    ///
+    /// # Errors
+    ///
+    /// [`HashRingError::VirtualNodeDoesNotExist`] is returned in the case that one of the
+    /// [`Node`]s provided for removal does not currently exist in the consistent hashing ring.
     #[inline]
     pub fn remove(&self, nodes: &[Arc<N>]) -> Result<()> {
         self.update(Update::Remove, nodes)
     }
 
+    /// Returns `true` if the provided `key` corresponds to an existing [`VirtualNode`] of some
+    /// [`Node`] in the consistent hashing ring, or `false` otherwise.
     pub fn has_virtual_node<K>(&self, key: &K) -> bool
     where
         K: Borrow<[u8]>,
@@ -264,7 +367,14 @@ where
         inner.has_virtual_node(key)
     }
 
-    // returns a clone of the `VirtualNode`
+    /// Look up in the consistent hashing ring and return a **clone** of the [`VirtualNode`] that
+    /// the given `key` should be assigned on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
     pub fn virtual_node_for_key<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
         K: Borrow<[u8]>,
@@ -287,6 +397,14 @@ where
         Ok(ret)
     }
 
+    /// Look up in the consistent hashing ring and return a [`Vec`] of [`Node`]s, each wrapped in
+    /// an [`Arc`], on which a replica of the given `key` should be assigned on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
     pub fn nodes_for_key<K>(&self, key: &K) -> Result<Vec<Arc<N>>>
     where
         K: Borrow<[u8]>,
@@ -328,6 +446,14 @@ where
         Ok(ret)
     }
 
+    /// Look up in the consistent hashing ring and return the [`VirtualNode`] which is the
+    /// predecessor of the one that the given `key` should be assigned on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
     #[inline]
     pub fn predecessor<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
@@ -336,6 +462,14 @@ where
         self.adjacent(Adjacency::Predecessor, key)
     }
 
+    /// Look up in the consistent hashing ring and return the [`VirtualNode`] which is the
+    /// successor of the one that the given `key` should be assigned on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
     #[inline]
     pub fn successor<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
@@ -366,6 +500,18 @@ where
         Ok(ret)
     }
 
+    /// Look up in the consistent hashing ring and return the first predecessor [`VirtualNode`] to
+    /// the one that the given `key` should be assigned on, but which also belongs to a different
+    /// distinct [`Node`] than the latter.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
+    /// - Returns [`HashRingError::SingleDistinctNodeRing`] if the consistent hashing ring
+    /// currently consists of a single distinct node and therefore all [`VirtualNode`]s in the ring
+    /// actually belong to the same [`Node`].
     pub fn predecessor_node<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
         K: Borrow<[u8]>,
@@ -373,6 +519,18 @@ where
         self.adjacent_node(Adjacency::Predecessor, key)
     }
 
+    /// Look up in the consistent hashing ring and return the first successor [`VirtualNode`] to
+    /// the one that the given `key` should be assigned on, but which also belongs to a different
+    /// distinct [`Node`] than the latter.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
+    /// [`Node`]s and therefore the given `key` cannot be assigned to any [`VirtualNode`] (as none
+    /// exists).
+    /// - Returns [`HashRingError::SingleDistinctNodeRing`] if the consistent hashing ring
+    /// currently consists of a single distinct node and therefore all [`VirtualNode`]s in the ring
+    /// actually belong to the same [`Node`].
     pub fn successor_node<K>(&self, key: &K) -> Result<VirtualNode<N>>
     where
         K: Borrow<[u8]>,
@@ -380,6 +538,14 @@ where
         self.adjacent_node(Adjacency::Successor, key)
     }
 
+    /// Returns an [`Iter`], i.e., an iterator to loop through all [`VirtualNode`]s that populate
+    /// the consistent hashing ring.
+    ///
+    /// See the documentation of [`Iter`] for more information regarding its use.
+    //
+    //  TODO: Include an example for calling [`HashRing::iter`], both here and in the documentation
+    //  of [`Iter`].
+    //
     #[inline]
     pub fn iter<'guard>(&self, guard: &'guard Guard) -> Iter<'guard, N, H> {
         let inner_ptr = self.inner.load(Ordering::Acquire, guard);
@@ -396,29 +562,29 @@ where
     N: Node + ?Sized,
     H: Hasher,
 {
-    /// TODO: Documentation?
+    /// Extend the [`HashRing<N, H>`] by the [`Node`]s provided through the given [`IntoIterator`]
+    /// over `Arc<N>>`.
     ///
-    /// Extend the `HashRing` by the `Node`s provided through the `Iterator` over `Arc<N>>`.
-    ///
-    /// Note that, due to the restriction of `Extend::extend()` method's signature, a `&mut
-    /// HashRing` is required.
-    /// The preferred way to extend the ring is via `HashRing::insert()` anyway; read the section
+    /// Note that, due to the restriction of [`Extend::extend`]'s signature, a `&mut HashRing` is
+    /// required to use this method.
+    /// The preferred way to extend the ring is via [`HashRing::insert`] anyway; read the section
     /// below for further details.
     ///
     /// # Panics
     ///
-    /// Although the `Extend` trait is implemented for `HashRing`, it is not the preferred way to
-    /// extend it.
-    /// The signature of `Extend::extend()` does not allow to return an `Err` if the extension
-    /// fails.
-    /// Therefore, in case of hash collision (e.g., when inserting an already existing `Node` in
-    /// the `HashRing`) this method fails by panicking (although the ring remains in a consistent
-    /// state, since updating the ring is considered an atomic operation).
+    /// Although the [`Extend`] trait is implemented for [`HashRing<N, H>`], it is not the
+    /// preferred way of extending it.
+    /// The signature of [`Extend::extend`] does not allow to return a `Result::Err` if the
+    /// extension attempt fails.
+    /// Therefore, in case of hash collision (e.g., when inserting an already existing [`Node`] in
+    /// the [`HashRing<N, H>`]) this method fails by panicking (although the ring remains in a
+    /// consistent state, since updating the ring is considered an atomic operation).
     ///
-    /// The preferred way to add nodes to the `HashRing` is via `HashRing::insert()` instead, which
-    /// returns an `Err` that can be handled in case of a failure.
+    /// The preferred way to add [`Node`]s to the [`HashRing<N, H>`] is via [`HashRing::insert`]
+    /// instead, which returns a `Result::Err` that can be handled in case of a failure.
     /// Only use this method if you know for sure that hash collisions are extremely unlikely and
-    /// practically impossible (e.g., when employing a cryptographically secure hash function).
+    /// practically impossible (e.g., when employing a cryptographically secure hash algorithm and
+    /// no attempts to re-insert existing [`Node`]s occur).
     fn extend<I: IntoIterator<Item = Arc<N>>>(&mut self, iter: I) {
         let mut nodes = vec![];
         for node in iter {

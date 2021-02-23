@@ -1,3 +1,19 @@
+// This file is part of lfchring-rs.
+//
+// Copyright 2021 Christos Katsakioris
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::borrow::Borrow;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher as StdHasher};
@@ -6,7 +22,8 @@ use std::sync::Arc;
 
 use crate::types::{Hasher, Node, Vnid};
 
-/// VirtualNode represents a single virtual node in the ring.
+/// A type to represent a single *virtual node* of a distinct [`Node`] in the consistent hashing
+/// ring.
 #[derive(Debug)]
 pub struct VirtualNode<N>
 where
@@ -36,6 +53,11 @@ where
         }
     }
 
+    // TODO: Also expose the name? Or `AsRef<[u8]>` is fine?
+
+    /// Returns a slice of [`Node`]s, each wrapped in an [`Arc`], which own a replica for the keys
+    /// that are assigned on the [`VirtualNode<N>`] at hand.
+    #[inline]
     pub fn replica_owners(&self) -> &[Arc<N>] {
         // By the time the `VirtualNode` became publicly accessible, its `replica_owners` field
         // must had already been populated via a call to `HashRingState::fix_replica_owners()`.

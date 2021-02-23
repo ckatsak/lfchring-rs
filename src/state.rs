@@ -1,3 +1,19 @@
+// This file is part of lfchring-rs.
+//
+// Copyright 2021 Christos Katsakioris
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use std::borrow::Borrow;
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
@@ -11,6 +27,12 @@ use crate::{
     vnode::VirtualNode,
 };
 
+/// This is the internal data structure that is pointed to by [`HashRing<N, H>`].
+///
+/// The pointer to it is read, cloned and updated atomically, on an optimistic concurrency control
+/// basis, to avoid synchronization issues.
+/// The data themselves are freed through the epoch-based memory reclamation technique implemented
+/// by [`crossbeam_epoch`].
 #[derive(Debug)]
 pub(crate) struct HashRingState<N, H>
 where
@@ -59,12 +81,12 @@ where
         }
     }
 
-    /// First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
-    /// any of them is already present in the current vnodes map to make sure no collision occurs.
-    /// Finally, merge the new vnodes into the old ones.
-    ///
-    /// NOTE: If any of the newly created `VirtualNode`s collides with an already existing one,
-    /// none of the new `nodes` is inserted in the ring.
+    // First, initialize all vnodes for the given nodes into a new `BTreeSet`. Then, check whether
+    // any of them is already present in the current vnodes map to make sure no collision occurs.
+    // Finally, merge the new vnodes into the old ones.
+    //
+    // NOTE: If any of the newly created `VirtualNode`s collides with an already existing one,
+    // none of the new `nodes` is inserted in the ring.
     pub(crate) fn insert(&mut self, nodes: &[Arc<N>]) -> Result<()> {
         let mut new = BTreeSet::new();
         for node in nodes {

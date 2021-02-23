@@ -16,7 +16,7 @@ categories = ["data-structures", "concurrency", "algorithms"]
 
 
 [dependencies]
-crossbeam-epoch = "0.9"
+crossbeam-epoch = "0.9" # remember to update rustdoc links
 log = "0.4"
 thiserror = "1.0"
 
