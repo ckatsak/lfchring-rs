@@ -49,8 +49,44 @@ pub type Result<T> = std::result::Result<T, HashRingError>;
 /// A trait to be implemented by any type that needs to act as a distinct node in the consistent
 /// hashing ring.
 pub trait Node {
-    /// Returns a byte slice that uniquely identifies the particular [`Node`] from the rest.
+    /// Returns a byte slice that uniquely identifies the particular [`Node`] from the rest of its
+    /// kind.
     fn hashring_node_id(&self) -> Cow<'_, [u8]>;
+}
+
+impl Node for String {
+    #[inline]
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.as_bytes())
+    }
+}
+
+impl Node for str {
+    #[inline]
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.as_bytes())
+    }
+}
+
+impl Node for Vec<u8> {
+    #[inline]
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self.as_slice())
+    }
+}
+
+impl Node for &[u8] {
+    #[inline]
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(&self)
+    }
+}
+
+impl Node for [u8] {
+    #[inline]
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self)
+    }
 }
 
 /// An error type returned by calls to the API exposed by this crate.

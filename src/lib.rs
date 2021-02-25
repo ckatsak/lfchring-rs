@@ -65,20 +65,46 @@
 //! uniquely represent the type as a byte slice.
 //! Implementing the [`Node`] trait can be as trivial as:
 //!
-//! ```rust,ignore
-//! impl Node for String {
-//!     fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-//!         Cow::Borrowed(&self.as_bytes())
-//!     }
+//! ```rust
+//! # use std::borrow::Cow;
+//! # use lfchring::Node;
+//! #
+//! struct ExampleNode {
+//!     various: u64,
+//!     fields: Vec<i32>,
+//!     // . . .
+//!     unique_name: String,
 //! }
 //!
-//! // Node can be unsized
-//! impl Node for str {
+//! impl Node for ExampleNode {
 //!     fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-//!         Cow::Borrowed(self.as_bytes())
+//!         Cow::Borrowed(&self.unique_name.as_bytes())
 //!     }
 //! }
 //! ```
+//!
+//! or:
+//!
+//! ```rust
+//! # use std::borrow::Cow;
+//! # use lfchring::Node;
+//! #
+//! struct StrNode(str);
+//!
+//! impl Node for StrNode {
+//!     fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+//!         Cow::Borrowed(self.0.as_bytes())
+//!     }
+//! }
+//! ```
+//!
+//! Note that [`Node`] can be unsized and that the crate already provides implementations for the
+//! following types:
+//!  - [`String`]
+//!  - [`str`]
+//!  - [`Vec<u8>`]
+//!  - `&[u8]`
+//!  - `[u8]`
 //!
 //! ## Hasher
 //!

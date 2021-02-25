@@ -16,7 +16,6 @@
 
 use super::*;
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -35,12 +34,6 @@ fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
 }
 
-impl Node for String {
-    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(&self.as_bytes())
-    }
-}
-
 #[test]
 fn node_string() {
     let s1 = String::from("Node1");
@@ -55,12 +48,6 @@ fn node_string() {
     eprintln!("vn1 = {:?},\nvn2 = {:?},\nvn3 = {:?}", vn1, vn2, vn3);
 }
 
-impl Node for str {
-    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(self.as_bytes())
-    }
-}
-
 #[test]
 fn node_str() {
     let s1 = "Node1";
@@ -72,6 +59,59 @@ fn node_str() {
     let vn3 = VirtualNode::new(&mut h, Arc::clone(&a1), 3);
 
     eprintln!("vn1 = {:?},\nvn2 = {:?},\nvn3 = {:?}", vn1, vn2, vn3);
+}
+
+#[test]
+fn test_node_impls() -> Result<()> {
+    const VNODES_PER_NODE: Vnid = 4;
+    const REPLICATION_FACTOR: u8 = 3;
+    init();
+
+    let mut h = DefaultStdHasher::default();
+
+    // Test impl Node for String
+    let string0: Arc<String> = Arc::from(String::from("String0"));
+    let string1: Arc<String> = Arc::from(String::from("String1"));
+    let _ = VirtualNode::new(&mut h, Arc::clone(&string0), 0);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&string1), 1);
+    let _r = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[string0, string1])?;
+    trace!("{}", _r);
+
+    // Test impl Node for str
+    let str0: Arc<str> = Arc::from("str0");
+    let str1: Arc<str> = Arc::from("str1");
+    let _ = VirtualNode::new(&mut h, Arc::clone(&str0), 0);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&str1), 1);
+    let _r = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[str0, str1])?;
+    trace!("{}", _r);
+
+    // Test impl Node for Vec<u8>
+    let vec0: Arc<Vec<u8>> = Arc::new(42u64.to_ne_bytes().to_vec());
+    let vec1: Arc<Vec<u8>> = Arc::new(u64::MAX.to_ne_bytes().to_vec());
+    let _ = VirtualNode::new(&mut h, Arc::clone(&vec0), 0);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&vec1), 1);
+    let _r = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[vec0, vec1])?;
+    trace!("{}", _r);
+
+    // Test impl Node for &[u8]
+    let tmp0 = 42u64.to_ne_bytes();
+    let tmp1 = u64::MAX.to_ne_bytes();
+    let slcref0: Arc<&[u8]> = Arc::new(&tmp0);
+    let slcref1: Arc<&[u8]> = Arc::new(&tmp1);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&slcref0), 0);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&slcref1), 1);
+    let _r = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[slcref0, slcref1])?;
+    trace!("{}", _r);
+
+    // Test impl Node for [u8]
+    let slcuns0: Arc<[u8]> = Arc::from(42u64.to_ne_bytes());
+    let slcuns1: Arc<[u8]> = Arc::from(u64::MAX.to_ne_bytes());
+    let _ = VirtualNode::new(&mut h, Arc::clone(&slcuns0), 0);
+    let _ = VirtualNode::new(&mut h, Arc::clone(&slcuns1), 1);
+    let _r = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[slcuns0, slcuns1])?;
+    trace!("{}", _r);
+
+    Ok(())
 }
 
 #[test]
