@@ -10,13 +10,12 @@ structure, supporting virtual nodes and keeping track of replication.
 repository = "https://github.com/ckatsak/lfchring-rs"
 readme = "README.md"
 edition = "2018"
-
 keywords = ["concurrent", "lock-free", "consistent-hash", "ring", "data-structure"]
 categories = ["data-structures", "concurrency", "algorithms"]
 
 
 [dependencies]
-crossbeam-epoch = "0.9" # remember to update rustdoc links
+crossbeam-epoch = "~0.9.2" # >= 0.9.2, < 0.10.0  # remember to update rustdoc links
 log = "0.4"
 thiserror = "1.0"
 
