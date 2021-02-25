@@ -282,10 +282,11 @@ where
         // We use `compare_and_set()` rather than `swap()` to detect any concurrent modification
         // (i.e., any modification made by another thread since we last loaded the current inner
         // state of the HashRing), to give the caller a chance to evaluate possible new options.
-        let old_inner = match self.inner.compare_and_set(
+        let old_inner = match self.inner.compare_exchange(
             curr_inner_ptr,
             new_inner_ptr,
             Ordering::AcqRel,
+            Ordering::Acquire,
             &guard,
         ) {
             Ok(_) => {
