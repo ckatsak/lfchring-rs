@@ -1,6 +1,6 @@
 [package]
 name = "lfchring"
-version = "0.1.0" # remember to update html_root_url
+version = "0.1.1" # remember to update html_root_url
 authors = ["Christos Katsakioris <ckatsak@gmail.com>"]
 license = "Apache-2.0"
 description = """

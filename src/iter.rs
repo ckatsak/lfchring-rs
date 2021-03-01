@@ -57,7 +57,7 @@ use crate::{
 ///  [`HashRing::iter`]: struct.HashRing.html#method.iter
 ///  [`Guard`]: struct.Guard.html
 ///  [`pin`]: fn.pin.html
-///  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
+///  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9.2/crossbeam_epoch/index.html
 pub struct Iter<'guard, N, H>
 where
     N: Node + ?Sized,

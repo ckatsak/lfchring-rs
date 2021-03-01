@@ -1,5 +1,4 @@
 <!-- this file uses https://github.com/livioribeiro/cargo-readme -->
-<!-- do not manually edit README.md, instead edit README.tpl or src/lib.rs -->
 
 # lfchring-rs
 
@@ -64,7 +63,6 @@ uniquely represent the type as a byte slice.
 Implementing the [`Node`] trait can be as trivial as:
 
 ```rust
-#
 struct ExampleNode {
     various: u64,
     fields: Vec<i32>,
@@ -82,7 +80,6 @@ impl Node for ExampleNode {
 or:
 
 ```rust
-#
 struct StrNode(str);
 
 impl Node for StrNode {
@@ -189,7 +186,7 @@ multiple concurrent reader threads and rare write operations.
  [RCU]: https://en.wikipedia.org/wiki/Read-copy-update
  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
  [RwLock]: https://doc.rust-lang.org/std/sync/struct.RwLock.html
- [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
+ [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9.2/crossbeam_epoch/index.html
 
 ## Running the tests
 

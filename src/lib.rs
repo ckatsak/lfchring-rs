@@ -195,10 +195,10 @@
 //!  [RCU]: https://en.wikipedia.org/wiki/Read-copy-update
 //!  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
 //!  [RwLock]: https://doc.rust-lang.org/std/sync/struct.RwLock.html
-//!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
+//!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9.2/crossbeam_epoch/index.html
 // Also see: https://morestina.net/blog/742/exploring-lock-free-rust-1-locks
 
-#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.0")]
+#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.1")]
 #![warn(rust_2018_idioms)]
 #![deny(
     missing_docs,
