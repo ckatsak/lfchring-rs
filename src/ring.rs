@@ -57,8 +57,9 @@ where
         // Atomically load the pointer.
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // Dereference it.
-        // SAFETY: Only `HashRing::new()`, `HashRing::insert()` and `HashRing::remove()` ever
-        // modify the pointer, and none of them sets it to null.
+        // SAFETY: `self.inner` is not null because after its initialization, it is always
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
         // Clone the copy of the inner state and wrap it in a new `Atomic` and a new `HashRing`.
         Self {
@@ -200,8 +201,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         unsafe { inner.as_ref().expect("inner HashRingState is null!") }.len_nodes()
         //unsafe { inner.deref() }.len_nodes()
     }
@@ -214,8 +215,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         unsafe { inner.as_ref().expect("inner HashRingState is null!") }.len_virtual_nodes()
         //unsafe { inner.deref() }.len_virtual_nodes()
     }
@@ -224,19 +225,6 @@ where
         // Pin current thread.
         let guard = epoch::pin();
 
-        ///////////////////////////////////////////////////////////////////////////////////////////
-        // Use the `Atomic` pointer to atomically load the pointee (i.e., the current inner state)
-        // to clone it and then update it.
-        // This is the READ part of the RCU technique.
-        //let curr_inner = self.inner.load(Ordering::Acquire, &guard);
-        // It should be non-null.
-        //assert!(!curr_inner.is_null(), "old inner HashRingState was null!");
-
-        // Dereference the atomically loaded `Shared` that points to the inner state to clone it.
-        // SAFETY: TODO
-        //let new_inner = unsafe { (curr_inner.deref()).clone() };
-        ///////////////////////////////////////////////////////////////////////////////////////////
-
         // Atomically load the pointer and then dereference it to retrieve the pointee, in order to
         // be able to clone it and then update it.
         // This is the READ part of the RCU technique.
@@ -244,18 +232,15 @@ where
         // be reordered before this load. All writes in other threads that release the same atomic
         // variable are visible in the current thread.
         let curr_inner_ptr = self.inner.load(Ordering::Acquire, &guard);
-        // SAFETY: `self.inner` is not null because after its initialization, it is always us
-        // setting it, and we never set it to null. Furthermore, we always use Acquire/Release
-        // orderings, and it is assumed that there is always a single thread setting this. FIXME?
+        // SAFETY:
+        // `self.inner` is not null because after its initialization, it is always us setting it,
+        // and we never set it to null. Furthermore, we always use Acquire/Release ordering.
         let curr_inner =
             unsafe { curr_inner_ptr.as_ref() }.expect("old inner HashRingState was null!");
 
         // Clone the current inner HashRingState. This is the COPY part of the RCU technique.
         let mut new_inner = curr_inner.clone();
 
-        //
-        //  vvv  TODO: Modify the local copy to prepare it for the UPDATE part  vvv
-        //
         // Modify the local copy of the inner state as deemed necessary (i.e., insert the new Nodes
         // to the local copy of the inner state, or remove the provided old ones from it).
         match op {
@@ -263,9 +248,6 @@ where
             Update::Remove => new_inner.remove(nodes)?,
         }
         let new_inner_ptr = Owned::new(new_inner);
-        //
-        //  ^^^  TODO: Modify the local copy to prepare it for the UPDATE part  ^^^
-        //
 
         // Atomically overwrite the pointer to the inner state with a pointer to the new, updated
         // one.
@@ -274,12 +256,7 @@ where
         // thread can be reordered before or after this store. All writes in other threads that
         // release the same atomic variable are visible before the modification and the
         // modification is visible in other threads that acquire the same atomic variable.
-        ///////////////////////////////////////////////////////////////////////////////////////////
-        //let old_inner = self
-        //    .inner
-        //    .swap(Owned::new(new_inner), Ordering::AcqRel, &guard);
-        ///////////////////////////////////////////////////////////////////////////////////////////
-        // We use `compare_and_set()` rather than `swap()` to detect any concurrent modification
+        // We use `compare_exchange()` rather than `swap()` to detect any concurrent modification
         // (i.e., any modification made by another thread since we last loaded the current inner
         // state of the HashRing), to give the caller a chance to evaluate possible new options.
         let old_inner = match self.inner.compare_exchange(
@@ -290,7 +267,7 @@ where
             &guard,
         ) {
             Ok(_) => {
-                // On success, I think `compare_and_set()` returns `new_inner_ptr` as `Shared`;
+                // On success, I think `compare_exchange()` returns `new_inner_ptr` as `Shared`;
                 // therefore, the pointer to the "old" inner state is probably `curr_inner_ptr`.
                 curr_inner_ptr
             }
@@ -308,16 +285,18 @@ where
         // threads in the current global epoch.
         // XXX: How is "destruction" defined? A simple deallocation will not do; we must make sure
         // that `Drop::drop()` is run, since `HashRingState` contains `VirtualNode`s which contain
-        // `Arc<Node>` that must be referenced counted correctly.
+        // `Arc<Node>` that must be reference-counted correctly.
         //  - According to The Rust Book, `Drop::drop()` _is_ a destructor.
         //  - It looks like `Guard::(self: &Self, ptr: Shared<'_, T>)` gets the ownership of `ptr`
         //  and does nothing more, hence `drop()`ping it in the end.
         // Therefore, this should probably be fine...(?)
-        // SAFETY: TODO
+        // SAFETY:
+        // `self.inner` is not null because after its initialization, it is always us ever setting
+        // it, and we never set it to null. Furthermore, we always use Acquire/Release ordering.
         unsafe {
             guard.defer_destroy(old_inner);
         }
-        // Flush to make the deferred execution of the destructor run as soon as possible. FIXME?
+        // Flush to accelerate the deferred execution of the destructor. FIXME?
         guard.flush();
 
         Ok(())
@@ -362,8 +341,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
         inner.has_virtual_node(key)
     }
@@ -383,8 +362,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
 
         let vn = inner.virtual_node_for_key(key)?;
@@ -413,8 +392,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
 
         let vn = inner.virtual_node_for_key(key)?;
@@ -432,8 +411,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
 
         let vn = inner.adjacent(adjacency, key)?;
@@ -486,8 +465,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
 
         let vn = inner.adjacent_node(adjacency, key)?;
@@ -551,8 +530,8 @@ where
     pub fn iter<'guard>(&self, guard: &'guard Guard) -> Iter<'guard, N, H> {
         let inner_ptr = self.inner.load(Ordering::Acquire, guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` or `remove()` setting it, and is never set to null. Furthermore, it always
-        // uses Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner_ptr.as_ref() }.expect("Iter's inner HashRingState is null!");
         Iter::new(inner_ptr, inner.len_virtual_nodes())
     }
@@ -606,8 +585,8 @@ where
         let guard = epoch::pin();
         let inner = self.inner.load(Ordering::Acquire, &guard);
         // SAFETY: `self.inner` is not null because after its initialization, it is always
-        // `insert()` setting it, and is never set to null. Furthermore, it always uses
-        // Acquire/Release orderings. FIXME?
+        // `HashRing::update` ever setting it, and it is never set to null. Furthermore, we always
+        // use Acquire/Release ordering.
         let inner = unsafe { inner.as_ref().expect("inner HashRingState is null!") };
         write!(f, "{}", inner)
     }

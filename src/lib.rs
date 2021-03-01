@@ -196,10 +196,6 @@
 //!  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
 //!  [RwLock]: https://doc.rust-lang.org/std/sync/struct.RwLock.html
 //!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
-//
-// FIXME: Any third-party module would be unable to `impl Node for` any type that is not defined in
-// itself, such as standard library's `String` or `str` types.
-//
 // Also see: https://morestina.net/blog/742/exploring-lock-free-rust-1-locks
 
 #![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.0")]
