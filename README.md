@@ -3,11 +3,13 @@
 
 # lfchring-rs
 
-[![Crates.io](https://img.shields.io/crates/v/cargo-readme.svg)](https://crates.io/crates/lfchring-rs)
+[![Crates.io](https://img.shields.io/crates/v/cargo-readme.svg)](https://crates.io/crates/lfchring)
 [![docs.rs](https://docs.rs/lfchring-rs/badge.svg)](https://docs.rs/lfchring-rs)
 [![GitHub](https://img.shields.io/github/license/ckatsak/lfchring-rs?style=flat)](#license)
 [![deps.rs](https://deps.rs/repo/github/ckatsak/lfchring-rs/status.svg)](https://deps.rs/repo/github/ckatsak/lfchring-rs)
+[![Build Status](https://travis-ci.com/ckatsak/lfchring-rs.svg?branch=main)](https://travis-ci.com/ckatsak/lfchring-rs)
 [![GitHub Workflow Status](https://github.com/ckatsak/lfchring-rs/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/ckatsak/lfchring-rs/actions/workflows/basic.yml)
+<!--[![Travis (.com) branch](https://img.shields.io/travis/com/ckatsak/lfchring-rs/main)](https://travis-ci.com/ckatsak/lfchring-rs)-->
 <!--[![GitHub Workflow Status](https://img.shields.io/github/workflow/status/ckatsak/lfchring-rs/basic.yml)](https://github.com/ckatsak/lfchring-rs/actions/workflows/basic.yml)-->
 
 This crate implements a concurrent, lock-free [consistent hashing ring] data structure.
@@ -62,19 +64,41 @@ uniquely represent the type as a byte slice.
 Implementing the [`Node`] trait can be as trivial as:
 
 ```rust
-impl Node for String {
-    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(&self.as_bytes())
-    }
+#
+struct ExampleNode {
+    various: u64,
+    fields: Vec<i32>,
+    // . . .
+    unique_name: String,
 }
 
-// Node can be unsized
-impl Node for str {
+impl Node for ExampleNode {
     fn hashring_node_id(&self) -> Cow<'_, [u8]> {
-        Cow::Borrowed(self.as_bytes())
+        Cow::Borrowed(&self.unique_name.as_bytes())
     }
 }
 ```
+
+or:
+
+```rust
+#
+struct StrNode(str);
+
+impl Node for StrNode {
+    fn hashring_node_id(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.0.as_bytes())
+    }
+}
+```
+
+Note that [`Node`] can be unsized and that the crate already provides implementations for the
+following types:
+ - [`String`]
+ - [`str`]
+ - [`Vec<u8>`]
+ - `&[u8]`
+ - `[u8]`
 
 ### Hasher
 
