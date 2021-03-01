@@ -68,7 +68,6 @@
 //! ```rust
 //! # use std::borrow::Cow;
 //! # use lfchring::Node;
-//! #
 //! struct ExampleNode {
 //!     various: u64,
 //!     fields: Vec<i32>,
@@ -88,7 +87,6 @@
 //! ```rust
 //! # use std::borrow::Cow;
 //! # use lfchring::Node;
-//! #
 //! struct StrNode(str);
 //!
 //! impl Node for StrNode {
@@ -100,9 +98,9 @@
 //!
 //! Note that [`Node`] can be unsized and that the crate already provides implementations for the
 //! following types:
-//!  - [`String`]
-//!  - [`str`]
-//!  - [`Vec<u8>`]
+//!  - `String`
+//!  - `str`
+//!  - `Vec<u8>`
 //!  - `&[u8]`
 //!  - `[u8]`
 //!
@@ -139,6 +137,44 @@
 //! - *Write operations* are considered those that effectively **mutate** the ring itself.
 //!   Common examples are the [`HashRing::insert`] and [`HashRing::remove`] methods, which insert
 //!   new nodes to the consistent hashing ring, or remove existing ones, respectively.
+//!
+//! ## Example
+//!
+//! What follows is a basic, single-threaded example to showcase its use:
+//!
+//! ```rust
+//! use std::sync::Arc;
+//! use hex_literal::hex;
+//! use lfchring::{HashRing, Node, VirtualNode, Vnid};
+//!
+//! const VIRTUAL_NODES_PER_NODE: Vnid = 2;
+//! const REPLICATION_FACTOR: u8 = 3;
+//!
+//! // Create an empty ring (see the docs for further options on constructing a ring).
+//! let ring = HashRing::new(VIRTUAL_NODES_PER_NODE, REPLICATION_FACTOR).unwrap();
+//!
+//! // Insert three new Nodes.
+//! let nodes: Vec<Arc<str>> = vec![Arc::from("Node1"), Arc::from("Node2"), Arc::from("Node3")];
+//! ring.insert(&nodes).expect("hash collision when inserting 3 new Nodes");
+//!
+//! assert_eq!(ring.len_nodes(), 3);
+//! assert_eq!(ring.len_virtual_nodes(), 3 * VIRTUAL_NODES_PER_NODE as usize);
+//!
+//! // Look up a key in the ring.
+//! let key = hex!("232a8a941ee901c1");
+//! let virtual_node_clone = ring.virtual_node_for_key(&key).unwrap();
+//!
+//! // The Nodes that should own a replica for the particular key can also be found via:
+//! let replica_owning_nodes = ring.nodes_for_key(&key).unwrap();
+//! assert_eq!(replica_owning_nodes, virtual_node_clone.replica_owners());
+//!
+//! // In this example, since the ring is populated with 3 Nodes and the replication factor is also
+//! // equal to 3, all Nodes should be assigned with a replica of the key.
+//! // However, the following assertion would fail, because of the order in which the replica
+//! // owning Nodes are reported: they are reported according to the order in which their virtual
+//! // nodes have been placed on the ring, rather than the order of the Nodes were inserted.
+//! assert_ne!(nodes, replica_owning_nodes); // `ne` due to the order in which Nodes are reported!
+//! ```
 //!
 //! # Implementation Notes
 //!
@@ -195,10 +231,10 @@
 //!  [RCU]: https://en.wikipedia.org/wiki/Read-copy-update
 //!  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
 //!  [RwLock]: https://doc.rust-lang.org/std/sync/struct.RwLock.html
-//!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9.2/crossbeam_epoch/index.html
+//!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
 // Also see: https://morestina.net/blog/742/exploring-lock-free-rust-1-locks
 
-#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.1")]
+#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.2")]
 #![warn(rust_2018_idioms)]
 #![deny(
     missing_docs,

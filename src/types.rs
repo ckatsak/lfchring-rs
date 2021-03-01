@@ -146,8 +146,9 @@ pub trait Hasher: Default {
     fn digest(&mut self, bytes: &[u8]) -> Vec<u8>;
 }
 
+/// A [`Hasher`] implementation for standard library's [`DefaultHasher`].
 #[derive(Debug, Default)]
-pub(crate) struct DefaultStdHasher;
+pub struct DefaultStdHasher;
 
 impl Hasher for DefaultStdHasher {
     fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {

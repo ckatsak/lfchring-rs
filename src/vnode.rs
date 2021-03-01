@@ -57,6 +57,10 @@ where
 
     /// Returns a slice of [`Node`]s, each wrapped in an [`Arc`], which own a replica for the keys
     /// that are assigned on the [`VirtualNode<N>`] at hand.
+    ///
+    /// The [`Node`]s are returned according to their order in the consistent hashing ring.
+    /// Therefore, the first [`Node`] is always the one that the particular [`VirtualNode`]
+    /// originally belongs to.
     #[inline]
     pub fn replica_owners(&self) -> &[Arc<N>] {
         // By the time the `VirtualNode` became publicly accessible, its `replica_owners` field

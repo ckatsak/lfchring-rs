@@ -3,9 +3,9 @@
 
 # lfchring-rs
 
-[![Crates.io](https://img.shields.io/crates/v/cargo-readme.svg)](https://crates.io/crates/lfchring)
-[![docs.rs](https://docs.rs/lfchring-rs/badge.svg)](https://docs.rs/lfchring-rs)
-[![GitHub](https://img.shields.io/github/license/ckatsak/lfchring-rs?style=flat)](#license)
+[![Crates.io](https://img.shields.io/crates/v/lfchring.svg)](https://crates.io/crates/lfchring)
+[![docs.rs](https://docs.rs/lfchring/badge.svg)](https://docs.rs/lfchring)
+[![GitHub License](https://img.shields.io/github/license/ckatsak/lfchring-rs?style=flat)](LICENSE)
 [![deps.rs](https://deps.rs/repo/github/ckatsak/lfchring-rs/status.svg)](https://deps.rs/repo/github/ckatsak/lfchring-rs)
 [![Build Status](https://travis-ci.com/ckatsak/lfchring-rs.svg?branch=main)](https://travis-ci.com/ckatsak/lfchring-rs)
 [![GitHub Workflow Status](https://github.com/ckatsak/lfchring-rs/actions/workflows/basic.yml/badge.svg?branch=main)](https://github.com/ckatsak/lfchring-rs/actions/workflows/basic.yml)

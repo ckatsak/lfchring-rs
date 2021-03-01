@@ -380,6 +380,10 @@ where
     /// Look up in the consistent hashing ring and return a [`Vec`] of [`Node`]s, each wrapped in
     /// an [`Arc`], on which a replica of the given `key` should be assigned on.
     ///
+    /// The [`Node`]s are returned according to their order in the consistent hashing ring.
+    /// Therefore, the first [`Node`] is always the one that the particular [`VirtualNode`]
+    /// originally belongs to.
+    ///
     /// # Errors
     ///
     /// Returns [`HashRingError::EmptyRing`] if the consistent hashing ring is currently empty of
