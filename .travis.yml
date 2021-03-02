@@ -18,9 +18,9 @@ before_script:
 # In this way, the build stops immediately if one of the commands fails.
 script: |
   cargo fmt --all -- --check &&
-  cargo clippy -- -D warnings &&
+  cargo clippy --all-features -- -D warnings &&
   cargo build &&
-  RUST_LOG=debug cargo test --workspace -- --nocapture &&
+  RUST_LOG=debug cargo test --all-features --workspace -- --nocapture &&
   cargo audit
 
 after_success: |

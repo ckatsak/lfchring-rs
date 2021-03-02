@@ -16,6 +16,11 @@ This crate implements a concurrent, lock-free [consistent hashing ring] data str
 
 ## Features
 
+This section documents the features of the data structure implementation.
+
+Information about the supported crate `features` can be found throughout this documentation
+page.
+
 ### Virtual Nodes
 
 The crate includes support for a configurable number of *virtual nodes* per ring node (i.e.,
@@ -117,6 +122,13 @@ hashing ring in the correct order.
 
 Not relying on standard library's machinery for hashing is a design choice that allows using
 [`HashRing<N, H>`] with hash functions that produce digests longer than `u64`.
+
+#### Feature `blake3-hash`
+
+By enabling the `blake3-hash` feature, a [`Hasher`] that employs the [BLAKE3][BLAKE3]
+cryptographic hash function as implemented in the [blake3 crate][blake3] is made available.
+
+For more information, refer to the documentation of the [`Blake3Hasher`] type.
 
 ### The Two Main Kinds of Operations
 
@@ -221,6 +233,8 @@ multiple concurrent reader threads and rare write operations.
 
  [consistent hashing ring]: https://en.wikipedia.org/wiki/Consistent_hashing
  [DefaultHasher]: https://doc.rust-lang.org/std/collections/hash_map/struct.DefaultHasher.html
+ [BLAKE3]: https://blake3.io/
+ [blake3]: https://docs.rs/blake3/0.3/blake3/
  [Arc]: https://doc.rust-lang.org/std/sync/struct.Arc.html
  [RCU]: https://en.wikipedia.org/wiki/Read-copy-update
  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
@@ -230,13 +244,13 @@ multiple concurrent reader threads and rare write operations.
 ## Running the tests
 
 ```console
-$ RUST_LOG=debug cargo t -- --nocapture
+$ RUST_LOG=debug cargo t --all-features -- --nocapture
 ```
 
 ## Generating the docs
 
 ```console
-$ cargo doc --no-deps
+$ cargo doc --all-features --no-deps
 ```
 
 ## License

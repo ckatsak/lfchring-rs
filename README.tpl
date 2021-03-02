@@ -17,13 +17,13 @@
 ## Running the tests
 
 ```console
-$ RUST_LOG=debug cargo t -- --nocapture
+$ RUST_LOG=debug cargo t --all-features -- --nocapture
 ```
 
 ## Generating the docs
 
 ```console
-$ cargo doc --no-deps
+$ cargo doc --all-features --no-deps
 ```
 
 ## License

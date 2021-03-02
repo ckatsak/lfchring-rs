@@ -164,3 +164,46 @@ impl Hasher for DefaultStdHasher {
 //        write!(f, "DefaultStdHasher{{}}")
 //    }
 //}
+
+/// A [`Hasher`] implementation based on the [BLAKE3][BLAKE3] cryptographic hash function, as
+/// implemented in the [blake3][blake3] crate.
+///
+/// To use this `Hasher` implementation in `lfchring-rs`, the `blake3-hash` crate feature must be
+/// enabled.
+///
+/// # Examples
+///
+/// Assuming the `blake3-hash` feature is enabled, a [`HashRing<N, H>`] that uses it can be
+/// initialized as shown below (for more initialization options, refer to the documentation of
+/// [`HashRing<N, H>`]):
+///
+/// ```rust
+/// use lfchring::{Blake3Hasher, HashRing, Result, Vnid};
+///
+/// const VIRTUAL_NODES_PER_NODE: Vnid = 2;
+/// const REPLICATION_FACTOR: u8 = 3;
+///
+/// # fn main() -> Result<()> {
+/// let ring: HashRing<str, Blake3Hasher> = HashRing::with_hasher(
+///     Blake3Hasher::default(),
+///     VIRTUAL_NODES_PER_NODE,
+///     REPLICATION_FACTOR
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+///
+///  [BLAKE3]: https://blake3.io/
+///  [blake3]: https://docs.rs/blake3/0.3/blake3/
+///  [`HashRing<N, H>`]: struct.HashRing.html
+#[cfg(any(feature = "blake3-hash", doc))]
+#[derive(Debug, Default)]
+pub struct Blake3Hasher;
+
+#[cfg(feature = "blake3-hash")]
+impl Hasher for Blake3Hasher {
+    fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {
+        let ret = blake3::hash(bytes);
+        ret.as_bytes().to_vec()
+    }
+}

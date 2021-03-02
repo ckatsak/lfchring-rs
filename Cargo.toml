@@ -18,8 +18,17 @@ categories = ["data-structures", "concurrency", "algorithms"]
 crossbeam-epoch = "~0.9.2" # >= 0.9.2, < 0.10.0  # remember to update rustdoc links
 log = "0.4"
 thiserror = "1.0"
+blake3 = { version = "~0.3", optional = true, features = ["std"] }
 
 [dev-dependencies]
 env_logger = "0.8"
 hex-literal = "0.3"
 rand = "0.8"
+
+[features]
+default = []
+blake3-hash = ["blake3"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
