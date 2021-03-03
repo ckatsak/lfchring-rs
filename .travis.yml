@@ -24,7 +24,7 @@ script: |
   cargo audit
 
 after_success: |
-  cargo tarpaulin -v --ignore-tests --timeout 900
+  cargo tarpaulin -v --all-features --ignore-tests --timeout 900
 
 notifications:
   email:

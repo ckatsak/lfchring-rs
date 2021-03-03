@@ -28,7 +28,7 @@ $ cargo doc --all-features --no-deps
 
 ## License
 
-Distributed under the terms of Apache License, Version 2.0.
+Distributed under the terms of the Apache License, Version 2.0.
 
 For further details consult the included [LICENSE file](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0.
 

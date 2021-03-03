@@ -165,7 +165,7 @@ impl Hasher for DefaultStdHasher {
 //    }
 //}
 
-/// A [`Hasher`] implementation based on the [BLAKE3][BLAKE3] cryptographic hash function, as
+/// A [`Hasher`] implementation based on the [BLAKE3][BLAKE3.io] cryptographic hash function, as
 /// implemented in the [blake3][blake3] crate.
 ///
 /// To use this `Hasher` implementation in `lfchring-rs`, the `blake3-hash` crate feature must be
@@ -193,7 +193,7 @@ impl Hasher for DefaultStdHasher {
 /// # }
 /// ```
 ///
-///  [BLAKE3]: https://blake3.io/
+///  [BLAKE3.io]: https://blake3.io/
 ///  [blake3]: https://docs.rs/blake3/0.3/blake3/
 ///  [`HashRing<N, H>`]: struct.HashRing.html
 #[cfg(any(feature = "blake3-hash", doc))]
@@ -202,8 +202,51 @@ pub struct Blake3Hasher;
 
 #[cfg(feature = "blake3-hash")]
 impl Hasher for Blake3Hasher {
+    #[inline]
     fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let ret = blake3::hash(bytes);
-        ret.as_bytes().to_vec()
+        blake3::hash(bytes).as_bytes().to_vec()
+    }
+}
+
+/// A [`Hasher`] implementation based on the [BLAKE2b][BLAKE2b] cryptographic hash function, as
+/// implemented in the [blake2b_simd][blake2b_simd] crate.
+///
+/// To use this `Hasher` implementation in `lfchring-rs`, the `blake2b-hash` crate feature must be
+/// enabled.
+///
+/// # Examples
+///
+/// Assuming the `blake2b-hash` feature is enabled, a [`HashRing<N, H>`] that uses it can be
+/// initialized as shown below (for more initialization options, refer to the documentation of
+/// [`HashRing<N, H>`]):
+///
+/// ```rust
+/// use lfchring::{Blake2bHasher, HashRing, Result, Vnid};
+///
+/// const VIRTUAL_NODES_PER_NODE: Vnid = 2;
+/// const REPLICATION_FACTOR: u8 = 3;
+///
+/// # fn main() -> Result<()> {
+/// let ring: HashRing<str, Blake2bHasher> = HashRing::with_hasher(
+///     Blake2bHasher::default(),
+///     VIRTUAL_NODES_PER_NODE,
+///     REPLICATION_FACTOR
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+///
+///  [BLAKE2b]: https://www.blake2.net/
+///  [blake2b_simd]: https://docs.rs/blake2b_simd/0.5/blake2b_simd/
+///  [`HashRing<N, H>`]: struct.HashRing.html
+#[cfg(any(feature = "blake2b-hash", doc))]
+#[derive(Debug, Default)]
+pub struct Blake2bHasher;
+
+#[cfg(feature = "blake2b-hash")]
+impl Hasher for Blake2bHasher {
+    #[inline]
+    fn digest(&mut self, bytes: &[u8]) -> Vec<u8> {
+        blake2b_simd::blake2b(bytes).as_bytes().to_vec()
     }
 }

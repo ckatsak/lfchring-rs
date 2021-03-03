@@ -131,10 +131,17 @@
 //!
 //! ### Feature `blake3-hash`
 //!
-//! By enabling the `blake3-hash` feature, a [`Hasher`] that employs the [BLAKE3][BLAKE3]
+//! By enabling the `blake3-hash` crate feature, a [`Hasher`] that employs the [BLAKE3][BLAKE3.io]
 //! cryptographic hash function as implemented in the [blake3 crate][blake3] is made available.
 //!
 //! For more information, refer to the documentation of the [`Blake3Hasher`] type.
+//!
+//! ### Feature `blake2b-hash`
+//!
+//! A [`Hasher`] implementation based on the [BLAKE2b][BLAKE2b] cryptographic hash function and the
+//! [blake2b_simd crate][blake2b_simd] is available by enabling the `blake2b-hash` crate feature.
+//!
+//! For more information, refer to the documentation of the [`Blake2bHasher`] type.
 //!
 //! ## The Two Main Kinds of Operations
 //!
@@ -239,8 +246,10 @@
 //!
 //!  [consistent hashing ring]: https://en.wikipedia.org/wiki/Consistent_hashing
 //!  [DefaultHasher]: https://doc.rust-lang.org/std/collections/hash_map/struct.DefaultHasher.html
-//!  [BLAKE3]: https://blake3.io/
+//!  [BLAKE3.io]: https://blake3.io/
 //!  [blake3]: https://docs.rs/blake3/0.3/blake3/
+//!  [BLAKE2b]: https://www.blake2.net/
+//!  [blake2b_simd]: https://docs.rs/blake2b_simd/0.5/blake2b_simd/
 //!  [Arc]: https://doc.rust-lang.org/std/sync/struct.Arc.html
 //!  [RCU]: https://en.wikipedia.org/wiki/Read-copy-update
 //!  [Mutex]: https://doc.rust-lang.org/std/sync/struct.Mutex.html
@@ -276,6 +285,8 @@ pub use types::Result;
 pub use types::Vnid;
 pub use vnode::VirtualNode;
 
+#[cfg(feature = "blake2b-hash")]
+pub use types::Blake2bHasher;
 #[cfg(feature = "blake3-hash")]
 pub use types::Blake3Hasher;
 

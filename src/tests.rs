@@ -166,16 +166,15 @@ fn test_insert_singlethr_01() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_insert_multithr_01() -> Result<()> {
+fn test_insert_multithr_01_with_hasher<H: Hasher + Send + Sync + 'static>(h: H) -> Result<()> {
     const VNODES_PER_NODE: Vnid = 4;
     const REPLICATION_FACTOR: u8 = 2;
     init();
 
-    let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+    let ring = HashRing::with_hasher_and_nodes(h, VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
 
     const ITERS: usize = 1000;
-    let rand_insertions = |ring: Arc<HashRing<String, DefaultStdHasher>>| {
+    let rand_insertions = |ring: Arc<HashRing<String, H>>| {
         let mut r = rand::thread_rng();
         let mut inserted_nodes = HashSet::new();
         for _ in 0..ITERS {
@@ -192,10 +191,10 @@ fn test_insert_multithr_01() -> Result<()> {
                 }
                 Err(err) => match err {
                     HashRingError::ConcurrentModification => {
-                        warn!("{:?}", err);
+                        debug!("{:?}", err);
                     }
                     _ => {
-                        error!("{:?}", err);
+                        debug!("{:?}", err);
                     }
                 },
             };
@@ -235,6 +234,23 @@ fn test_insert_multithr_01() -> Result<()> {
     debug!("Hash Ring String Representation:\n{}", ring);
 
     Ok(())
+}
+
+#[test]
+fn test_insert_multithr_01_stdhash() -> Result<()> {
+    test_insert_multithr_01_with_hasher(DefaultStdHasher::default())
+}
+
+#[cfg(feature = "blake3-hash")]
+#[test]
+fn test_insert_multithr_01_blake3() -> Result<()> {
+    test_insert_multithr_01_with_hasher(Blake3Hasher::default())
+}
+
+#[cfg(feature = "blake2b-hash")]
+#[test]
+fn test_insert_multithr_01_blake2b() -> Result<()> {
+    test_insert_multithr_01_with_hasher(Blake2bHasher::default())
 }
 
 #[test]
@@ -639,13 +655,12 @@ fn test_iter_singlethr_01() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_iter_multithr_01() -> Result<()> {
+fn test_iter_multithr_01_with_hasher<H: Hasher + Send + Sync + 'static>(h: H) -> Result<()> {
     const VNODES_PER_NODE: Vnid = 3;
     const REPLICATION_FACTOR: u8 = 3;
     init();
 
-    let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
+    let ring = HashRing::with_hasher(h, VNODES_PER_NODE, REPLICATION_FACTOR)?;
 
     // Insert the nodes
     const NUM_NODES: usize = 4;
@@ -714,6 +729,23 @@ fn test_iter_multithr_01() -> Result<()> {
     //trace!("ring = {}", ring);
 
     Ok(())
+}
+
+#[test]
+fn test_iter_multithr_01_stdhash() -> Result<()> {
+    test_iter_multithr_01_with_hasher(DefaultStdHasher::default())
+}
+
+#[cfg(feature = "blake3-hash")]
+#[test]
+fn test_iter_multithr_01_blake3() -> Result<()> {
+    test_iter_multithr_01_with_hasher(Blake3Hasher::default())
+}
+
+#[cfg(feature = "blake2b-hash")]
+#[test]
+fn test_iter_multithr_01_blake2b() -> Result<()> {
+    test_iter_multithr_01_with_hasher(Blake2bHasher::default())
 }
 
 /// Test DoubleEndedIterator
@@ -1075,162 +1107,6 @@ fn test_contention_multithr_01() -> Result<()> {
     assert_eq!(0, ring.len_virtual_nodes());
     assert_eq!(0, ring.len_nodes());
     trace!("[main] ring = {}", ring);
-
-    Ok(())
-}
-
-#[cfg(feature = "blake3-hash")]
-#[test]
-fn test_iter_multithr_blake3_01() -> Result<()> {
-    const VNODES_PER_NODE: Vnid = 3;
-    const REPLICATION_FACTOR: u8 = 3;
-    init();
-
-    //let ring = HashRing::with_nodes(VNODES_PER_NODE, REPLICATION_FACTOR, &[])?;
-    let ring = HashRing::with_hasher(Blake3Hasher::default(), VNODES_PER_NODE, REPLICATION_FACTOR)?;
-
-    // Insert the nodes
-    const NUM_NODES: usize = 4;
-    for node_id in 0..NUM_NODES {
-        let n = Arc::new(format!("Node-{}", node_id));
-        ring.insert(&[n])?;
-    }
-    debug!("ring: {}", ring);
-
-    let ring = Arc::new(ring);
-    let r1 = Arc::clone(&ring);
-    let r2 = Arc::clone(&ring);
-
-    let t1 = thread::spawn(move || {
-        trace!("START: r1.len_virtual_nodes() = {}", r1.len_virtual_nodes());
-        thread::sleep(Duration::from_millis(100));
-        const TOTAL_NODES: usize = 20;
-        for node_id in NUM_NODES..TOTAL_NODES {
-            // produce a new node & attempt to insert it
-            let n = Arc::new(format!("Node-{}", node_id));
-            //trace!("adding {:?}...", n);
-            if let Err(err) = r1.insert(&[n]) {
-                match err {
-                    HashRingError::ConcurrentModification => {
-                        warn!("{:?}", err);
-                    }
-                    _ => {
-                        error!("{:?}", err);
-                    }
-                };
-            };
-        }
-        trace!("END: r1.len_virtual_nodes() = {}", r1.len_virtual_nodes());
-    });
-    let t2 = thread::spawn(move || {
-        debug!("START: r2.len_vnodes() = {}", r2.len_virtual_nodes());
-
-        // Create the iterator before the other thread starts inserting nodes...
-        let guard = &pin();
-        let hashring_iter = r2.iter(guard).enumerate();
-
-        // ...and sleep for a sec...
-        thread::sleep(Duration::from_millis(1000));
-
-        // ...then go through the previously constructed iterator...
-        let mut count = 0;
-        for (i, vn) in hashring_iter {
-            debug!("ITERATION {}: {}", i, vn);
-            count += 1;
-        }
-
-        // and assert that we did NOT iterate more than the initially constructed ring's size.
-        assert_eq!(count, NUM_NODES * VNODES_PER_NODE as usize);
-
-        // NOTE: `r2` still points to the ring which is being updated, so the number of virtual
-        // nodes reported below should reflect the changes made through `r1`, but the iterator
-        // has been working with a snapshot of the ring before `t1`'s updates occur.
-        trace!("END: r2.len_virtual_nodes() = {}", r2.len_virtual_nodes());
-        trace!("END: r2 = {}", r2);
-    });
-
-    // wait for the threads to finish
-    t1.join().unwrap();
-    t2.join().unwrap();
-    //trace!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
-    //trace!("ring = {}", ring);
-
-    Ok(())
-}
-
-#[cfg(feature = "blake3-hash")]
-#[test]
-fn test_insert_multithr_blake3_01() -> Result<()> {
-    const VNODES_PER_NODE: Vnid = 4;
-    const REPLICATION_FACTOR: u8 = 2;
-    init();
-
-    let ring = HashRing::with_hasher_and_nodes(
-        Blake3Hasher::default(),
-        VNODES_PER_NODE,
-        REPLICATION_FACTOR,
-        &[],
-    )?;
-
-    const ITERS: usize = 1000;
-    let rand_insertions = |ring: Arc<HashRing<String, Blake3Hasher>>| {
-        let mut r = rand::thread_rng();
-        let mut inserted_nodes = HashSet::new();
-        for _ in 0..ITERS {
-            // sleep for random duration (ms)
-            let sleep_dur = r.gen_range(50..100);
-            thread::sleep(Duration::from_millis(sleep_dur));
-            // produce a new node & attempt to insert it
-            let node_id: usize = r.gen_range(0..3000);
-            let n = Arc::new(format!("Node-{}", node_id));
-            trace!("adding {:?}...", n);
-            match ring.insert(&[n]) {
-                Ok(_) => {
-                    let _ = inserted_nodes.insert(node_id);
-                }
-                Err(err) => match err {
-                    HashRingError::ConcurrentModification => {
-                        warn!("{:?}", err);
-                    }
-                    _ => {
-                        error!("{:?}", err);
-                    }
-                },
-            };
-        }
-        inserted_nodes
-    };
-
-    // Wrap the ring in an Arc and clone it once for each thread.
-    let ring = Arc::new(ring);
-    let r1 = Arc::clone(&ring);
-    let r2 = Arc::clone(&ring);
-    // Spawn the two threads...
-    let t1 = thread::spawn(move || rand_insertions(r1));
-    let t2 = thread::spawn(move || rand_insertions(r2));
-    // ...and wait for them to finish.
-    let s1 = t1.join().unwrap();
-    let s2 = t2.join().unwrap();
-
-    // Their results must be disjoint...
-    assert!(s1.is_disjoint(&s2));
-    // ...so create their union.
-    let union: BTreeSet<_> = s1.union(&s2).collect();
-    assert_eq!(union.len(), s1.len() + s2.len());
-    //debug!("Thread sets:\ns1 = {:?}\ns2 = {:?}", s1, s2);
-    //debug!("s1 ⋃ s2 = {:?}", union);
-    debug!("Thr1 successfully inserted {} distinct nodes.", s1.len());
-    debug!("Thr2 successfully inserted {} distinct nodes.", s2.len());
-    debug!("A total of {} distinct nodes were inserted.", union.len());
-    debug!("ring.len_nodes() = {}", ring.len_nodes());
-    debug!("ring.len_virtual_nodes() = {}", ring.len_virtual_nodes());
-    assert_eq!(union.len(), ring.len_nodes());
-    assert_eq!(
-        union.len() * VNODES_PER_NODE as usize,
-        ring.len_virtual_nodes()
-    );
-
-    debug!("Hash Ring String Representation:\n{}", ring);
 
     Ok(())
 }

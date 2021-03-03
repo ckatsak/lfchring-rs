@@ -18,7 +18,8 @@ categories = ["data-structures", "concurrency", "algorithms"]
 crossbeam-epoch = "~0.9.2" # >= 0.9.2, < 0.10.0  # remember to update rustdoc links
 log = "0.4"
 thiserror = "1.0"
-blake3 = { version = "~0.3", optional = true, features = ["std"] }
+blake2b_simd = { version = "~0.5.11", optional = true } # remember to update rustdoc links
+blake3 = { version = "~0.3.7", optional = true } # remember to update rustdoc links
 
 [dev-dependencies]
 env_logger = "0.8"
@@ -27,6 +28,7 @@ rand = "0.8"
 
 [features]
 default = []
+blake2b-hash = ["blake2b_simd"]
 blake3-hash = ["blake3"]
 
 [package.metadata.docs.rs]
