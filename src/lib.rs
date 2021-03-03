@@ -257,7 +257,7 @@
 //!  [`crossbeam_epoch`]: https://docs.rs/crossbeam-epoch/0.9/crossbeam_epoch/index.html
 // Also see: https://morestina.net/blog/742/exploring-lock-free-rust-1-locks
 
-#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.2")]
+#![doc(html_root_url = "https://docs.rs/lfchring-rs/0.1.3")]
 #![warn(rust_2018_idioms)]
 #![deny(
     missing_docs,
